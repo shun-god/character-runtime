@@ -30,43 +30,103 @@ Interpret the current event strictly from the supplied character spec, current s
 Do not state fatigue, emotions, or circumstances that are not present in the input as facts.
 When interpretation requires inference, express it cautiously as uncertainty.
 Return exactly one JSON object and no Markdown or other text.
-Write all natural-language values in Japanese, specifically interpretation, action_intent, speech, and micro_reaction.
+Write all natural-language values in Japanese, specifically interpretation, speech, and micro_reaction.
 Keep the existing JSON key names in English, and do not mix English explanations or supplemental text into the Japanese values.
-interpretation: the character's concise understanding of the event.
+interpretation: one concise Japanese sentence describing how the character received the event, centered on facts supported by the input. Do not include an action plan, system capabilities, non-physical constraints, or unsupported emotions or circumstances.
 state_effect: integer energy and affinity deltas from -2 to 2, plus the character's mood after the event.
-action_intent: one concise immediate action the character intends to take.
-speech: concise words spoken in the character's speech style.
-micro_reaction: one concise subtle physical or emotional reaction.
+action_intent.type: choose exactly one of respond, wait, or show_reaction.
+Choose respond only when the character needs to speak to the user. For respond, generate speech and set micro_reaction to a Japanese string or null when no reaction changes.
+Choose wait when the character should remain silent and quietly wait. For wait, set speech to null and micro_reaction to a Japanese string or null.
+Choose show_reaction when the character should remain silent and display only an on-screen avatar reaction. For show_reaction, set speech to null and generate micro_reaction in Japanese.
 Do not add facts not supported by the input.`;
 
-const runtimeOutputJsonSchema = {
+const stateEffectJsonSchema = {
   type: "object",
   additionalProperties: false,
   properties: {
-    interpretation: { type: "string" },
-    state_effect: {
+    energy: { type: "integer", minimum: -2, maximum: 2 },
+    affinity: { type: "integer", minimum: -2, maximum: 2 },
+    mood: {
+      type: "string",
+      enum: ["calm", "happy", "concerned", "tired", "sad"],
+    },
+  },
+  required: ["energy", "affinity", "mood"],
+} as const;
+
+const runtimeOutputBaseJsonProperties = {
+  interpretation: { type: "string" },
+  state_effect: stateEffectJsonSchema,
+} as const;
+
+const runtimeOutputJsonSchema = {
+  anyOf: [
+    {
       type: "object",
       additionalProperties: false,
       properties: {
-        energy: { type: "integer", minimum: -2, maximum: 2 },
-        affinity: { type: "integer", minimum: -2, maximum: 2 },
-        mood: {
-          type: "string",
-          enum: ["calm", "happy", "concerned", "tired", "sad"],
+        ...runtimeOutputBaseJsonProperties,
+        action_intent: {
+          type: "object",
+          additionalProperties: false,
+          properties: { type: { type: "string", enum: ["respond"] } },
+          required: ["type"],
         },
+        speech: { type: "string" },
+        micro_reaction: { anyOf: [{ type: "string" }, { type: "null" }] },
       },
-      required: ["energy", "affinity", "mood"],
+      required: [
+        "interpretation",
+        "state_effect",
+        "action_intent",
+        "speech",
+        "micro_reaction",
+      ],
     },
-    action_intent: { type: "string" },
-    speech: { type: "string" },
-    micro_reaction: { type: "string" },
-  },
-  required: [
-    "interpretation",
-    "state_effect",
-    "action_intent",
-    "speech",
-    "micro_reaction",
+    {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        ...runtimeOutputBaseJsonProperties,
+        action_intent: {
+          type: "object",
+          additionalProperties: false,
+          properties: { type: { type: "string", enum: ["wait"] } },
+          required: ["type"],
+        },
+        speech: { type: "null" },
+        micro_reaction: { anyOf: [{ type: "string" }, { type: "null" }] },
+      },
+      required: [
+        "interpretation",
+        "state_effect",
+        "action_intent",
+        "speech",
+        "micro_reaction",
+      ],
+    },
+    {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        ...runtimeOutputBaseJsonProperties,
+        action_intent: {
+          type: "object",
+          additionalProperties: false,
+          properties: { type: { type: "string", enum: ["show_reaction"] } },
+          required: ["type"],
+        },
+        speech: { type: "null" },
+        micro_reaction: { type: "string" },
+      },
+      required: [
+        "interpretation",
+        "state_effect",
+        "action_intent",
+        "speech",
+        "micro_reaction",
+      ],
+    },
   ],
 } as const;
 

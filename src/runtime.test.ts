@@ -22,11 +22,27 @@ const spec: CharacterSpec = {
 };
 
 const output: RuntimeOutput = {
-  interpretation: "The user seems tired.",
+  interpretation: "ユーザーは疲れているように見える。",
   state_effect: { energy: -2, affinity: 1, mood: "concerned" },
-  action_intent: "stay_near_user",
+  action_intent: { type: "respond" },
   speech: "おかえり、プロデューサー。",
-  micro_reaction: "small_smile",
+  micro_reaction: "小さく微笑む",
+};
+
+const waitOutput: RuntimeOutput = {
+  interpretation: "ユーザーはしばらく静かにしている。",
+  state_effect: { energy: 0, affinity: 0, mood: "calm" },
+  action_intent: { type: "wait" },
+  speech: null,
+  micro_reaction: null,
+};
+
+const reactionOutput: RuntimeOutput = {
+  interpretation: "ユーザーはこちらを見ている。",
+  state_effect: { energy: 0, affinity: 0, mood: "calm" },
+  action_intent: { type: "show_reaction" },
+  speech: null,
+  micro_reaction: "少し首を傾げる",
 };
 
 class StubEngine implements CognitionEngine {
@@ -35,6 +51,14 @@ class StubEngine implements CognitionEngine {
   async process(input: CognitionInput): Promise<RuntimeOutput> {
     this.inputs.push(input);
     return output;
+  }
+}
+
+class InvalidOutputEngine implements CognitionEngine {
+  async process(): Promise<RuntimeOutput> {
+    return parseGeminiRuntimeOutput(
+      JSON.stringify({ ...output, speech: null }),
+    );
   }
 }
 
@@ -82,11 +106,16 @@ test("recent memory keeps only the configured number of entries", () => {
   );
 });
 
-test("parses and validates a structured Gemini response without network access", () => {
+test("accepts valid structured responses without network access", () => {
   assert.deepEqual(parseGeminiRuntimeOutput(JSON.stringify(output)), output);
+  assert.deepEqual(parseGeminiRuntimeOutput(JSON.stringify(waitOutput)), waitOutput);
+  assert.deepEqual(
+    parseGeminiRuntimeOutput(JSON.stringify(reactionOutput)),
+    reactionOutput,
+  );
 });
 
-test("rejects malformed or schema-invalid Gemini responses", () => {
+test("rejects malformed or invalid action combinations", () => {
   assert.throws(
     () => parseGeminiRuntimeOutput(""),
     /Gemini returned an empty response/,
@@ -99,4 +128,43 @@ test("rejects malformed or schema-invalid Gemini responses", () => {
     () => parseGeminiRuntimeOutput('{"interpretation":"missing fields"}'),
     /Gemini response does not match RuntimeOutput/,
   );
+  assert.throws(
+    () =>
+      parseGeminiRuntimeOutput(
+        JSON.stringify({ ...output, speech: null }),
+      ),
+    /Gemini response does not match RuntimeOutput/,
+  );
+  assert.throws(
+    () =>
+      parseGeminiRuntimeOutput(
+        JSON.stringify({ ...waitOutput, speech: "話しかける" }),
+      ),
+    /Gemini response does not match RuntimeOutput/,
+  );
+  assert.throws(
+    () =>
+      parseGeminiRuntimeOutput(
+        JSON.stringify({ ...reactionOutput, micro_reaction: null }),
+      ),
+    /Gemini response does not match RuntimeOutput/,
+  );
+  assert.throws(
+    () =>
+      parseGeminiRuntimeOutput(
+        JSON.stringify({ ...reactionOutput, speech: "話しかける" }),
+      ),
+    /Gemini response does not match RuntimeOutput/,
+  );
+});
+
+test("does not update state or memory when cognition returns invalid output", async () => {
+  const runtime = new CharacterRuntime(spec, new InvalidOutputEngine());
+
+  await assert.rejects(
+    runtime.processEvent("event"),
+    /Gemini response does not match RuntimeOutput/,
+  );
+  assert.deepEqual(runtime.getState(), { energy: 5, affinity: 0, mood: "calm" });
+  assert.deepEqual(runtime.getMemory(), []);
 });

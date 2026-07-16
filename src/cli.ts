@@ -12,9 +12,9 @@ function printResult(result: RuntimeOutput): void {
   console.log(`energy: ${result.state_effect.energy >= 0 ? "+" : ""}${result.state_effect.energy}`);
   console.log(`affinity: ${result.state_effect.affinity >= 0 ? "+" : ""}${result.state_effect.affinity}`);
   console.log(`mood: ${result.state_effect.mood}`);
-  console.log(`\naction_intent:\n${result.action_intent}`);
-  console.log(`\nspeech:\n${result.speech}`);
-  console.log(`\nmicro_reaction:\n${result.micro_reaction}\n`);
+  console.log(`\naction_intent:\ntype: ${result.action_intent.type}`);
+  console.log(`\nspeech:\n${result.speech ?? "(none)"}`);
+  console.log(`\nmicro_reaction:\n${result.micro_reaction ?? "(none)"}\n`);
 }
 
 async function main(): Promise<void> {

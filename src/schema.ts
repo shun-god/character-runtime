@@ -22,17 +22,37 @@ export const characterSpecSchema = z.object({
   }),
 });
 
-export const runtimeOutputSchema = z.object({
-  interpretation: z.string(),
-  state_effect: z.object({
-    energy: z.number().int().min(-2).max(2),
-    affinity: z.number().int().min(-2).max(2),
-    mood: moodSchema,
-  }),
-  action_intent: z.string(),
-  speech: z.string(),
-  micro_reaction: z.string(),
+const stateEffectSchema = z.object({
+  energy: z.number().int().min(-2).max(2),
+  affinity: z.number().int().min(-2).max(2),
+  mood: moodSchema,
 });
+
+const runtimeOutputFields = {
+  interpretation: z.string(),
+  state_effect: stateEffectSchema,
+};
+
+export const runtimeOutputSchema = z.union([
+  z.object({
+    ...runtimeOutputFields,
+    action_intent: z.object({ type: z.literal("respond") }),
+    speech: z.string(),
+    micro_reaction: z.string().nullable(),
+  }),
+  z.object({
+    ...runtimeOutputFields,
+    action_intent: z.object({ type: z.literal("wait") }),
+    speech: z.null(),
+    micro_reaction: z.string().nullable(),
+  }),
+  z.object({
+    ...runtimeOutputFields,
+    action_intent: z.object({ type: z.literal("show_reaction") }),
+    speech: z.null(),
+    micro_reaction: z.string(),
+  }),
+]);
 
 export type CharacterSpec = z.infer<typeof characterSpecSchema>;
 export type Mood = z.infer<typeof moodSchema>;
