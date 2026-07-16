@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 
-import { OpenAICognitionEngine } from "./cognition.js";
+import { GeminiCognitionEngine } from "./cognition.js";
 import { CharacterRuntime } from "./runtime.js";
 import { characterSpecSchema, type RuntimeOutput } from "./schema.js";
 
@@ -18,18 +18,18 @@ function printResult(result: RuntimeOutput): void {
 }
 
 async function main(): Promise<void> {
-  const apiKey = process.env.OPENAI_API_KEY;
+  const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) {
-    throw new Error("OPENAI_API_KEY is not set.");
+    throw new Error("GEMINI_API_KEY is not set.");
   }
 
   const specUrl = new URL("../character-spec.json", import.meta.url);
   const characterSpec = characterSpecSchema.parse(
     JSON.parse(await readFile(specUrl, "utf8")),
   );
-  const engine = new OpenAICognitionEngine({
+  const engine = new GeminiCognitionEngine({
     apiKey,
-    model: process.env.OPENAI_MODEL,
+    model: process.env.GEMINI_MODEL,
   });
   const runtime = new CharacterRuntime(characterSpec, engine);
   const cli = createInterface({ input, output });

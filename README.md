@@ -8,14 +8,14 @@ Node.js 20以降が必要です。
 
 ```powershell
 npm install
-$env:OPENAI_API_KEY = "your_api_key"
+$env:GEMINI_API_KEY = "your_api_key"
 npm start
 ```
 
-モデルは既定で `gpt-5-mini` です。変更する場合だけ `OPENAI_MODEL` を指定します。
+モデルは既定で `gemini-3.1-flash-lite` です。変更する場合だけ `GEMINI_MODEL` を指定します。
 
 ```powershell
-$env:OPENAI_MODEL = "gpt-5-mini"
+$env:GEMINI_MODEL = "gemini-3.1-flash-lite"
 ```
 
 CLIではEvent本文を入力します。終了するには `exit` を入力します。

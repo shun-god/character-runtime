@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { CognitionEngine, CognitionInput } from "./cognition.js";
+import {
+  parseGeminiRuntimeOutput,
+  type CognitionEngine,
+  type CognitionInput,
+} from "./cognition.js";
 import { RecentMemory } from "./memory.js";
 import { CharacterRuntime } from "./runtime.js";
 import type { CharacterSpec, RuntimeOutput } from "./schema.js";
@@ -75,5 +79,24 @@ test("recent memory keeps only the configured number of entries", () => {
   assert.deepEqual(
     memory.getAll().map((entry) => entry.event),
     ["two", "three"],
+  );
+});
+
+test("parses and validates a structured Gemini response without network access", () => {
+  assert.deepEqual(parseGeminiRuntimeOutput(JSON.stringify(output)), output);
+});
+
+test("rejects malformed or schema-invalid Gemini responses", () => {
+  assert.throws(
+    () => parseGeminiRuntimeOutput(""),
+    /Gemini returned an empty response/,
+  );
+  assert.throws(
+    () => parseGeminiRuntimeOutput("not json"),
+    /Gemini returned invalid JSON/,
+  );
+  assert.throws(
+    () => parseGeminiRuntimeOutput('{"interpretation":"missing fields"}'),
+    /Gemini response does not match RuntimeOutput/,
   );
 });

@@ -9,7 +9,7 @@
     "test": "node --import tsx --test src/*.test.ts"
   },
   "dependencies": {
-    "openai": "^5.0.0",
+    "@google/genai": "^2.12.0",
     "zod": "^3.25.0"
   },
   "devDependencies": {
