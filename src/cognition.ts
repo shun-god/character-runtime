@@ -30,6 +30,8 @@ Interpret the current event strictly from the supplied character spec, current s
 Do not state fatigue, emotions, or circumstances that are not present in the input as facts.
 When interpretation requires inference, express it cautiously as uncertainty.
 Return exactly one JSON object and no Markdown or other text.
+Write all natural-language values in Japanese, specifically interpretation, action_intent, speech, and micro_reaction.
+Keep the existing JSON key names in English, and do not mix English explanations or supplemental text into the Japanese values.
 interpretation: the character's concise understanding of the event.
 state_effect: integer energy and affinity deltas from -2 to 2, plus the character's mood after the event.
 action_intent: one concise immediate action the character intends to take.
