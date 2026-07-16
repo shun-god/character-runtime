@@ -32,6 +32,14 @@ Character Runtime v0.1 (type 'exit' to quit)
 
 StateとMemoryはプロセス内だけに保持され、CLI終了時に破棄されます。
 
+## Evaluation
+
+固定Eventセットを順番に評価し、結果を `evaluation/results/` に保存します。
+
+```powershell
+npm run evaluate
+```
+
 ## Verification
 
 ```powershell
