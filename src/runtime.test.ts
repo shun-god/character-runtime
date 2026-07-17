@@ -7,6 +7,7 @@ import {
   type CognitionInput,
 } from "./cognition.js";
 import {
+  createCognitionResources,
   FEW_SHOT_EVENTS,
   selectFewShotExamples,
 } from "./cognition-context.js";
@@ -15,8 +16,9 @@ import { RecentMemory } from "./memory.js";
 import { CharacterRuntime } from "./runtime.js";
 import {
   bestEvaluationSchema,
+  characterPrinciplesSchema,
   characterSpecSchema,
-  responsePrinciplesSchema,
+  interactionPolicySchema,
   type CharacterSpec,
   type RuntimeOutput,
 } from "./schema.js";
@@ -108,17 +110,32 @@ test("validates character specs and resolves the user address", () => {
   );
 });
 
-test("validates response principles", () => {
+test("validates Interaction Policy", () => {
   assert.deepEqual(
-    responsePrinciplesSchema.parse({ principles: ["  原則  "] }),
-    { principles: ["原則"] },
+    interactionPolicySchema.parse({ principles: ["  共通方針  "] }),
+    { principles: ["共通方針"] },
   );
   assert.throws(
-    () => responsePrinciplesSchema.parse({ principles: [] }),
+    () => interactionPolicySchema.parse({ principles: [] }),
     /at least 1 element/,
   );
   assert.throws(
-    () => responsePrinciplesSchema.parse({ principles: ["  "] }),
+    () => interactionPolicySchema.parse({ principles: "invalid" }),
+    /Expected array/,
+  );
+});
+
+test("validates Character Principles", () => {
+  assert.deepEqual(
+    characterPrinciplesSchema.parse({ principles: ["  固有原則  "] }),
+    { principles: ["固有原則"] },
+  );
+  assert.throws(
+    () => characterPrinciplesSchema.parse({ principles: [] }),
+    /at least 1 element/,
+  );
+  assert.throws(
+    () => characterPrinciplesSchema.parse({ principles: ["  "] }),
     /at least 1 character/,
   );
 });
@@ -179,6 +196,37 @@ test("selects all required few-shot examples and rejects missing events", () => 
       }),
     /Required few-shot event is missing/,
   );
+});
+
+test("keeps Interaction Policy outside the Character Package", () => {
+  const interactionPolicy = interactionPolicySchema.parse({
+    principles: ["共通方針"],
+  });
+  const characterPrinciples = characterPrinciplesSchema.parse({
+    principles: ["固有原則"],
+  });
+  const bestEvaluation = bestEvaluationSchema.parse({
+    results: FEW_SHOT_EVENTS.map((event) => ({
+      event,
+      output,
+      notes: ["note"],
+    })),
+  });
+
+  const resources = createCognitionResources(
+    interactionPolicy,
+    spec,
+    characterPrinciples,
+    bestEvaluation,
+  );
+
+  assert.deepEqual(resources.interactionPolicy, interactionPolicy);
+  assert.deepEqual(resources.characterPackage, {
+    spec,
+    principles: characterPrinciples,
+    goldenEvaluation: bestEvaluation,
+  });
+  assert.equal("interactionPolicy" in resources.characterPackage, false);
 });
 
 test("attaches Golden comparison information", () => {

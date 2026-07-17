@@ -40,11 +40,11 @@ async function main(): Promise<void> {
 
   const model = process.env.GEMINI_MODEL ?? DEFAULT_MODEL;
   const {
-    characterSpec,
-    responsePrinciples,
-    bestEvaluation,
+    interactionPolicy,
+    characterPackage,
     fewShotExamples,
   } = await loadCognitionResources();
+  const bestEvaluation = characterPackage.goldenEvaluation;
   const events = eventsSchema.parse(
     JSON.parse(
       await readFile(new URL("../evaluation/events.json", import.meta.url), "utf8"),
@@ -65,11 +65,12 @@ async function main(): Promise<void> {
   for (const event of events) {
     const golden = bestEvaluation.results.find((result) => result.event === event);
     const runtime = new CharacterRuntime(
-      characterSpec,
+      characterPackage.spec,
       new GeminiCognitionEngine({
         apiKey,
         model,
-        responsePrinciples,
+        interactionPolicy,
+        characterPrinciples: characterPackage.principles,
         fewShotExamples,
       }),
     );

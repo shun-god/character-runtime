@@ -23,15 +23,16 @@ async function main(): Promise<void> {
     throw new Error("GEMINI_API_KEY is not set.");
   }
 
-  const { characterSpec, responsePrinciples, fewShotExamples } =
+  const { interactionPolicy, characterPackage, fewShotExamples } =
     await loadCognitionResources();
   const engine = new GeminiCognitionEngine({
     apiKey,
     model: process.env.GEMINI_MODEL,
-    responsePrinciples,
+    interactionPolicy,
+    characterPrinciples: characterPackage.principles,
     fewShotExamples,
   });
-  const runtime = new CharacterRuntime(characterSpec, engine);
+  const runtime = new CharacterRuntime(characterPackage.spec, engine);
   const cli = createInterface({ input, output });
 
   console.log("Character Runtime v0.1 (type 'exit' to quit)");

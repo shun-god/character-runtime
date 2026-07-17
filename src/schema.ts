@@ -63,9 +63,12 @@ export const runtimeOutputSchema = z.union([
 
 const nonEmptyStringSchema = z.string().trim().min(1);
 
-export const responsePrinciplesSchema = z.object({
+const principlesSchema = z.object({
   principles: z.array(nonEmptyStringSchema).min(1),
 });
+
+export const interactionPolicySchema = principlesSchema;
+export const characterPrinciplesSchema = principlesSchema;
 
 export const bestEvaluationResultSchema = z.object({
   event: nonEmptyStringSchema,
@@ -82,6 +85,7 @@ export const bestEvaluationSchema = z.object({
 export type CharacterSpec = z.infer<typeof characterSpecSchema>;
 export type Mood = z.infer<typeof moodSchema>;
 export type RuntimeOutput = z.infer<typeof runtimeOutputSchema>;
-export type ResponsePrinciples = z.infer<typeof responsePrinciplesSchema>;
+export type InteractionPolicy = z.infer<typeof interactionPolicySchema>;
+export type CharacterPrinciples = z.infer<typeof characterPrinciplesSchema>;
 export type BestEvaluation = z.infer<typeof bestEvaluationSchema>;
 export type BestEvaluationResult = z.infer<typeof bestEvaluationResultSchema>;

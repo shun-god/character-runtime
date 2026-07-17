@@ -4,8 +4,9 @@ import { z } from "zod";
 import {
   runtimeOutputSchema,
   type BestEvaluationResult,
+  type CharacterPrinciples,
   type CharacterSpec,
-  type ResponsePrinciples,
+  type InteractionPolicy,
   type RuntimeOutput,
 } from "./schema.js";
 import type { MemoryEntry } from "./memory.js";
@@ -46,10 +47,11 @@ Choose show_reaction when the character should remain silent and display only an
 Do not add facts not supported by the input.
 
 # Context Use
-The input is separated into character_spec, response_principles, examples, and current_context.
-Character Spec defines stable identity and voice. Response Principles define concrete response judgments across events. Examples demonstrate how those sources should be interpreted, but are not a fixed response table.
+The input is separated into runtime_rules, interaction_policy, character_spec, character_principles, examples, and current_context.
+Interaction Policy defines character-independent desktop interaction behavior. Never describe it as the character's values, dialogue policy, or system configuration.
+Character Spec defines stable identity and voice. Character Principles define concrete judgments specific to this character. Examples demonstrate how the character-specific sources should be interpreted, but are not a fixed response table.
 Generalize the examples' judgment, relationship, and speech tendencies to the current event. Never copy an example merely because its event text matches.
-Runtime structure and safety rules always take priority. When response guidance conflicts, prioritize facts directly present in the current event, then Response Principles, then the tendencies demonstrated by Examples, then abstract Character Spec tendencies.
+When guidance conflicts, prioritize RuntimeOutput structure, safety constraints, and facts directly present in the current event, then Interaction Policy, Character Principles, tendencies demonstrated by Examples, and finally abstract Character Spec tendencies.
 Current state and memory provide context but must not override facts in the current event.`;
 
 const stateEffectJsonSchema = {
@@ -177,18 +179,21 @@ export function parseGeminiRuntimeOutput(text: string | undefined): RuntimeOutpu
 export class GeminiCognitionEngine implements CognitionEngine {
   readonly #client: GoogleGenAI;
   readonly #model: string;
-  readonly #responsePrinciples: ResponsePrinciples;
+  readonly #interactionPolicy: InteractionPolicy;
+  readonly #characterPrinciples: CharacterPrinciples;
   readonly #fewShotExamples: readonly BestEvaluationResult[];
 
   constructor(options: {
     apiKey: string;
     model?: string;
-    responsePrinciples: ResponsePrinciples;
+    interactionPolicy: InteractionPolicy;
+    characterPrinciples: CharacterPrinciples;
     fewShotExamples: readonly BestEvaluationResult[];
   }) {
     this.#client = new GoogleGenAI({ apiKey: options.apiKey });
     this.#model = options.model ?? "gemini-3.1-flash-lite";
-    this.#responsePrinciples = options.responsePrinciples;
+    this.#interactionPolicy = options.interactionPolicy;
+    this.#characterPrinciples = options.characterPrinciples;
     this.#fewShotExamples = options.fewShotExamples;
   }
 
@@ -201,16 +206,18 @@ export class GeminiCognitionEngine implements CognitionEngine {
           {
             runtime_rules: {
               context_sections: [
+                "Interaction Policy",
                 "Character Spec",
-                "Response Principles",
+                "Character Principles",
                 "Examples",
                 "Current Context",
               ],
               example_policy:
                 "Generalize the examples; do not use them as fixed responses.",
             },
+            interaction_policy: this.#interactionPolicy,
             character_spec: input.characterSpec,
-            response_principles: this.#responsePrinciples,
+            character_principles: this.#characterPrinciples,
             examples: this.#fewShotExamples,
             current_context: {
               current_state: input.currentState,

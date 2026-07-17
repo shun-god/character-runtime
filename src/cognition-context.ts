@@ -2,12 +2,14 @@ import { readFile } from "node:fs/promises";
 
 import {
   bestEvaluationSchema,
+  characterPrinciplesSchema,
   characterSpecSchema,
-  responsePrinciplesSchema,
+  interactionPolicySchema,
   type BestEvaluation,
   type BestEvaluationResult,
+  type CharacterPrinciples,
   type CharacterSpec,
-  type ResponsePrinciples,
+  type InteractionPolicy,
 } from "./schema.js";
 
 export const FEW_SHOT_EVENTS = [
@@ -18,10 +20,15 @@ export const FEW_SHOT_EVENTS = [
   "user said they want to try something difficult",
 ] as const;
 
-type CognitionResources = {
-  characterSpec: CharacterSpec;
-  responsePrinciples: ResponsePrinciples;
-  bestEvaluation: BestEvaluation;
+export type CharacterPackage = {
+  spec: CharacterSpec;
+  principles: CharacterPrinciples;
+  goldenEvaluation: BestEvaluation;
+};
+
+export type CognitionResources = {
+  interactionPolicy: InteractionPolicy;
+  characterPackage: CharacterPackage;
   fewShotExamples: BestEvaluationResult[];
 };
 
@@ -41,24 +48,47 @@ export function selectFewShotExamples(
   });
 }
 
+export function createCognitionResources(
+  interactionPolicy: InteractionPolicy,
+  characterSpec: CharacterSpec,
+  characterPrinciples: CharacterPrinciples,
+  bestEvaluation: BestEvaluation,
+): CognitionResources {
+  return {
+    interactionPolicy,
+    characterPackage: {
+      spec: characterSpec,
+      principles: characterPrinciples,
+      goldenEvaluation: bestEvaluation,
+    },
+    fewShotExamples: selectFewShotExamples(bestEvaluation),
+  };
+}
+
 export async function loadCognitionResources(): Promise<CognitionResources> {
-  const [characterSpecJson, responsePrinciplesJson, bestEvaluationJson] =
-    await Promise.all([
+  const [
+    interactionPolicyJson,
+    characterSpecJson,
+    characterPrinciplesJson,
+    bestEvaluationJson,
+  ] = await Promise.all([
+      readJson(new URL("../interaction-policy.json", import.meta.url)),
       readJson(new URL("../character-spec.json", import.meta.url)),
-      readJson(new URL("../response-principles.json", import.meta.url)),
+      readJson(new URL("../character-principles.json", import.meta.url)),
       readJson(new URL("../best-evaluation.json", import.meta.url)),
     ]);
 
+  const interactionPolicy = interactionPolicySchema.parse(interactionPolicyJson);
   const characterSpec = characterSpecSchema.parse(characterSpecJson);
-  const responsePrinciples = responsePrinciplesSchema.parse(
-    responsePrinciplesJson,
+  const characterPrinciples = characterPrinciplesSchema.parse(
+    characterPrinciplesJson,
   );
   const bestEvaluation = bestEvaluationSchema.parse(bestEvaluationJson);
 
-  return {
+  return createCognitionResources(
+    interactionPolicy,
     characterSpec,
-    responsePrinciples,
+    characterPrinciples,
     bestEvaluation,
-    fewShotExamples: selectFewShotExamples(bestEvaluation),
-  };
+  );
 }

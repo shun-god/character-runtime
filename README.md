@@ -34,11 +34,12 @@ StateとMemoryはプロセス内だけに保持され、CLI終了時に破棄さ
 
 ## Cognition Sources
 
+- `interaction-policy.json`: デスクトップ常駐時の共通Interaction Policy
 - `character-spec.json`: 安定した人格、関係性、口調、行動傾向
-- `response-principles.json`: Eventをまたいで適用する具体的な応答判断
-- `best-evaluation.json`: 理想出力と評価基準。固定応答テーブルではありません
+- `character-principles.json`: 現在のキャラクター固有の応答判断
+- `best-evaluation.json`: 現在のキャラクター固有の理想出力と評価基準。固定応答テーブルではありません
 
-現在はBest Evaluationの代表5例だけをFew-shotとして使用し、LLM呼び出しは一回のままです。
+Interaction PolicyはCharacter Packageに含めません。Character Spec、Character Principles、Best Evaluationが現在のCharacter Packageを構成します。現在も代表5例だけをFew-shotとして使用し、LLM呼び出しは一回のままです。
 
 ## Evaluation
 
