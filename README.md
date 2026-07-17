@@ -32,9 +32,17 @@ Character Runtime v0.1 (type 'exit' to quit)
 
 StateとMemoryはプロセス内だけに保持され、CLI終了時に破棄されます。
 
+## Cognition Sources
+
+- `character-spec.json`: 安定した人格、関係性、口調、行動傾向
+- `response-principles.json`: Eventをまたいで適用する具体的な応答判断
+- `best-evaluation.json`: 理想出力と評価基準。固定応答テーブルではありません
+
+現在はBest Evaluationの代表5例だけをFew-shotとして使用し、LLM呼び出しは一回のままです。
+
 ## Evaluation
 
-固定Eventセットを順番に評価し、結果を `evaluation/results/` に保存します。
+固定Eventセットを順番に評価し、結果とGolden Evaluationの完全一致比較を `evaluation/results/` に保存します。GoldenがないEventでは、Golden関連フィールドは`null`になります。
 
 ```powershell
 npm run evaluate

@@ -6,10 +6,17 @@ import {
   type CognitionEngine,
   type CognitionInput,
 } from "./cognition.js";
+import {
+  FEW_SHOT_EVENTS,
+  selectFewShotExamples,
+} from "./cognition-context.js";
+import { createGoldenReference } from "./golden-comparison.js";
 import { RecentMemory } from "./memory.js";
 import { CharacterRuntime } from "./runtime.js";
 import {
+  bestEvaluationSchema,
   characterSpecSchema,
+  responsePrinciplesSchema,
   type CharacterSpec,
   type RuntimeOutput,
 } from "./schema.js";
@@ -99,6 +106,102 @@ test("validates character specs and resolves the user address", () => {
       }),
     /Required/,
   );
+});
+
+test("validates response principles", () => {
+  assert.deepEqual(
+    responsePrinciplesSchema.parse({ principles: ["  原則  "] }),
+    { principles: ["原則"] },
+  );
+  assert.throws(
+    () => responsePrinciplesSchema.parse({ principles: [] }),
+    /at least 1 element/,
+  );
+  assert.throws(
+    () => responsePrinciplesSchema.parse({ principles: ["  "] }),
+    /at least 1 character/,
+  );
+});
+
+test("validates Golden Evaluation and reuses RuntimeOutput rules", () => {
+  const valid = {
+    results: [{ event: "event", output, notes: ["note"] }],
+  };
+  assert.deepEqual(bestEvaluationSchema.parse(valid).results[0]?.output, output);
+
+  assert.throws(
+    () =>
+      bestEvaluationSchema.parse({
+        results: [
+          {
+            event: "event",
+            output: { ...output, speech: null },
+            notes: ["note"],
+          },
+        ],
+      }),
+    /Invalid input/,
+  );
+  assert.throws(
+    () =>
+      bestEvaluationSchema.parse({
+        results: [{ event: "event", output }],
+      }),
+    /Required/,
+  );
+  assert.throws(
+    () =>
+      bestEvaluationSchema.parse({
+        results: [{ event: "event", output, notes: [""] }],
+      }),
+    /at least 1 character/,
+  );
+});
+
+test("selects all required few-shot examples and rejects missing events", () => {
+  const bestEvaluation = bestEvaluationSchema.parse({
+    results: FEW_SHOT_EVENTS.map((event) => ({
+      event,
+      output,
+      notes: ["note"],
+    })),
+  });
+
+  assert.deepEqual(
+    selectFewShotExamples(bestEvaluation).map((result) => result.event),
+    [...FEW_SHOT_EVENTS],
+  );
+  assert.throws(
+    () =>
+      selectFewShotExamples({
+        ...bestEvaluation,
+        results: bestEvaluation.results.slice(1),
+      }),
+    /Required few-shot event is missing/,
+  );
+});
+
+test("attaches Golden comparison information", () => {
+  const golden = { event: "event", output, notes: ["note"] };
+  assert.deepEqual(createGoldenReference(output, golden), {
+    golden_output: output,
+    golden_notes: ["note"],
+    comparison: {
+      action_type_match: true,
+      speech_exact_match: true,
+      micro_reaction_exact_match: true,
+    },
+  });
+  assert.deepEqual(createGoldenReference(waitOutput, golden).comparison, {
+    action_type_match: false,
+    speech_exact_match: false,
+    micro_reaction_exact_match: false,
+  });
+  assert.deepEqual(createGoldenReference(output, undefined), {
+    golden_output: null,
+    golden_notes: null,
+    comparison: null,
+  });
 });
 
 test("applies state effects and supplies updated state and memory next time", async () => {

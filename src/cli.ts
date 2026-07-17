@@ -1,10 +1,10 @@
-import { readFile } from "node:fs/promises";
 import { createInterface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 
 import { GeminiCognitionEngine } from "./cognition.js";
+import { loadCognitionResources } from "./cognition-context.js";
 import { CharacterRuntime } from "./runtime.js";
-import { characterSpecSchema, type RuntimeOutput } from "./schema.js";
+import type { RuntimeOutput } from "./schema.js";
 
 function printResult(result: RuntimeOutput): void {
   console.log(`\nevent_summary:\n${result.event_summary}`);
@@ -23,13 +23,13 @@ async function main(): Promise<void> {
     throw new Error("GEMINI_API_KEY is not set.");
   }
 
-  const specUrl = new URL("../character-spec.json", import.meta.url);
-  const characterSpec = characterSpecSchema.parse(
-    JSON.parse(await readFile(specUrl, "utf8")),
-  );
+  const { characterSpec, responsePrinciples, fewShotExamples } =
+    await loadCognitionResources();
   const engine = new GeminiCognitionEngine({
     apiKey,
     model: process.env.GEMINI_MODEL,
+    responsePrinciples,
+    fewShotExamples,
   });
   const runtime = new CharacterRuntime(characterSpec, engine);
   const cli = createInterface({ input, output });

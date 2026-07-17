@@ -4,9 +4,13 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 
 import { GeminiCognitionEngine } from "../src/cognition.js";
+import { loadCognitionResources } from "../src/cognition-context.js";
+import {
+  createGoldenReference,
+  type GoldenReference,
+} from "../src/golden-comparison.js";
 import { CharacterRuntime } from "../src/runtime.js";
 import {
-  characterSpecSchema,
   type RuntimeOutput,
 } from "../src/schema.js";
 import type { CharacterState } from "../src/state.js";
@@ -18,12 +22,12 @@ type EvaluationSuccess = {
   event: string;
   output: RuntimeOutput;
   state_after: CharacterState;
-};
+} & GoldenReference;
 
 type EvaluationFailure = {
   event: string;
   error: string;
-};
+} & GoldenReference;
 
 const errorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error);
@@ -35,34 +39,57 @@ async function main(): Promise<void> {
   }
 
   const model = process.env.GEMINI_MODEL ?? DEFAULT_MODEL;
-  const characterSpec = characterSpecSchema.parse(
-    JSON.parse(
-      await readFile(
-        new URL("../character-spec.json", import.meta.url),
-        "utf8",
-      ),
-    ),
-  );
+  const {
+    characterSpec,
+    responsePrinciples,
+    bestEvaluation,
+    fewShotExamples,
+  } = await loadCognitionResources();
   const events = eventsSchema.parse(
     JSON.parse(
       await readFile(new URL("../evaluation/events.json", import.meta.url), "utf8"),
     ),
   );
+  const eventSet = new Set(events);
+  const missingGoldenEvents = bestEvaluation.results
+    .map((result) => result.event)
+    .filter((event) => !eventSet.has(event));
+  if (missingGoldenEvents.length > 0) {
+    throw new Error(
+      `Evaluation events are missing Golden events: ${missingGoldenEvents.join(", ")}`,
+    );
+  }
+
   const results: Array<EvaluationSuccess | EvaluationFailure> = [];
 
   for (const event of events) {
+    const golden = bestEvaluation.results.find((result) => result.event === event);
     const runtime = new CharacterRuntime(
       characterSpec,
-      new GeminiCognitionEngine({ apiKey, model }),
+      new GeminiCognitionEngine({
+        apiKey,
+        model,
+        responsePrinciples,
+        fewShotExamples,
+      }),
     );
 
     try {
       const output = await runtime.processEvent(event);
-      results.push({ event, output, state_after: runtime.getState() });
+      results.push({
+        event,
+        output,
+        state_after: runtime.getState(),
+        ...createGoldenReference(output, golden),
+      });
       console.log(`Evaluated: ${event}`);
     } catch (error) {
       const message = errorMessage(error).replaceAll(apiKey, "[REDACTED]");
-      results.push({ event, error: message });
+      results.push({
+        event,
+        error: message,
+        ...createGoldenReference(null, golden),
+      });
       console.error(`Failed: ${event}: ${message}`);
     }
   }

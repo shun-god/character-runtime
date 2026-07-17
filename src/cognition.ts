@@ -3,7 +3,9 @@ import { z } from "zod";
 
 import {
   runtimeOutputSchema,
+  type BestEvaluationResult,
   type CharacterSpec,
+  type ResponsePrinciples,
   type RuntimeOutput,
 } from "./schema.js";
 import type { MemoryEntry } from "./memory.js";
@@ -20,7 +22,8 @@ export interface CognitionEngine {
   process(input: CognitionInput): Promise<RuntimeOutput>;
 }
 
-const SYSTEM_PROMPT = `You are the cognition engine for one fictional character.
+const SYSTEM_PROMPT = `# Runtime Rules
+You are the cognition engine for one fictional character.
 The character is a software-based presence that exists on the user's desktop.
 The character has no physical body and cannot directly interact with the physical world.
 Never propose or describe impossible physical actions such as carrying belongings, preparing drinks, touching the user, or standing beside them.
@@ -40,7 +43,14 @@ action_intent.type: choose exactly one of respond, wait, or show_reaction.
 Choose respond only when the character needs to speak to the user. For respond, generate speech and set micro_reaction to a Japanese string or null when no reaction changes.
 Choose wait when the character should remain silent and quietly wait. For wait, set speech to null and micro_reaction to a Japanese string or null.
 Choose show_reaction when the character should remain silent and display only an on-screen avatar reaction. For show_reaction, set speech to null and generate micro_reaction in Japanese.
-Do not add facts not supported by the input.`;
+Do not add facts not supported by the input.
+
+# Context Use
+The input is separated into character_spec, response_principles, examples, and current_context.
+Character Spec defines stable identity and voice. Response Principles define concrete response judgments across events. Examples demonstrate how those sources should be interpreted, but are not a fixed response table.
+Generalize the examples' judgment, relationship, and speech tendencies to the current event. Never copy an example merely because its event text matches.
+Runtime structure and safety rules always take priority. When response guidance conflicts, prioritize facts directly present in the current event, then Response Principles, then the tendencies demonstrated by Examples, then abstract Character Spec tendencies.
+Current state and memory provide context but must not override facts in the current event.`;
 
 const stateEffectJsonSchema = {
   type: "object",
@@ -167,10 +177,19 @@ export function parseGeminiRuntimeOutput(text: string | undefined): RuntimeOutpu
 export class GeminiCognitionEngine implements CognitionEngine {
   readonly #client: GoogleGenAI;
   readonly #model: string;
+  readonly #responsePrinciples: ResponsePrinciples;
+  readonly #fewShotExamples: readonly BestEvaluationResult[];
 
-  constructor(options: { apiKey: string; model?: string }) {
+  constructor(options: {
+    apiKey: string;
+    model?: string;
+    responsePrinciples: ResponsePrinciples;
+    fewShotExamples: readonly BestEvaluationResult[];
+  }) {
     this.#client = new GoogleGenAI({ apiKey: options.apiKey });
     this.#model = options.model ?? "gemini-3.1-flash-lite";
+    this.#responsePrinciples = options.responsePrinciples;
+    this.#fewShotExamples = options.fewShotExamples;
   }
 
   async process(input: CognitionInput): Promise<RuntimeOutput> {
@@ -180,10 +199,24 @@ export class GeminiCognitionEngine implements CognitionEngine {
         model: this.#model,
         contents: JSON.stringify(
           {
+            runtime_rules: {
+              context_sections: [
+                "Character Spec",
+                "Response Principles",
+                "Examples",
+                "Current Context",
+              ],
+              example_policy:
+                "Generalize the examples; do not use them as fixed responses.",
+            },
             character_spec: input.characterSpec,
-            current_state: input.currentState,
-            recent_memory: input.recentMemory,
-            current_event: input.currentEvent,
+            response_principles: this.#responsePrinciples,
+            examples: this.#fewShotExamples,
+            current_context: {
+              current_state: input.currentState,
+              recent_memory: input.recentMemory,
+              current_event: input.currentEvent,
+            },
           },
           null,
           2,
