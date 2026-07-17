@@ -35,11 +35,11 @@ StateとMemoryはプロセス内だけに保持され、CLI終了時に破棄さ
 ## Cognition Sources
 
 - `interaction-policy.json`: デスクトップ常駐時の共通Interaction Policy
-- `character-spec.json`: 安定した人格、関係性、口調、行動傾向
-- `character-principles.json`: 現在のキャラクター固有の応答判断
-- `best-evaluation.json`: 現在のキャラクター固有の理想出力と評価基準。固定応答テーブルではありません
+- `characters/hiro/character-spec.json`: 安定した人格、関係性、口調、行動傾向
+- `characters/hiro/character-principles.json`: 現在のキャラクター固有の応答判断
+- `characters/hiro/best-evaluation.json`: 現在のキャラクター固有の理想出力と評価基準。固定応答テーブルではありません
 
-Interaction PolicyはCharacter Packageに含めません。Character Spec、Character Principles、Best Evaluationが現在のCharacter Packageを構成します。現在も代表5例だけをFew-shotとして使用し、LLM呼び出しは一回のままです。
+`characters/hiro/`が現在のCharacter Packageです。Character Spec、Character Principles、Best Evaluationで構成され、`interaction-policy.json`はPackage外のRuntime共通設定です。現時点では切り替え機能は未実装で`hiro`を固定利用しますが、将来的なPackage差し替えを想定しています。現在も代表5例だけをFew-shotとして使用し、LLM呼び出しは一回のままです。
 
 ## Evaluation
 

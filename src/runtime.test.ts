@@ -9,6 +9,7 @@ import {
 import {
   createCognitionResources,
   FEW_SHOT_EVENTS,
+  loadCognitionResources,
   selectFewShotExamples,
 } from "./cognition-context.js";
 import { createGoldenReference } from "./golden-comparison.js";
@@ -227,6 +228,30 @@ test("keeps Interaction Policy outside the Character Package", () => {
     goldenEvaluation: bestEvaluation,
   });
   assert.equal("interactionPolicy" in resources.characterPackage, false);
+});
+
+test("loads the current Character Package and root Interaction Policy", async () => {
+  const resources = await loadCognitionResources();
+
+  assert.equal(resources.characterPackage.spec.identity.name, "篠澤広");
+  assert.ok(resources.characterPackage.principles.principles.length > 0);
+  assert.ok(resources.characterPackage.goldenEvaluation.results.length > 0);
+  assert.ok(resources.interactionPolicy.principles.length > 0);
+  assert.equal("interactionPolicy" in resources.characterPackage, false);
+  assert.deepEqual(
+    resources.fewShotExamples.map((example) => example.event),
+    [...FEW_SHOT_EVENTS],
+  );
+});
+
+test("reports the Character ID and path when a package file is missing", async () => {
+  await assert.rejects(
+    loadCognitionResources({
+      id: "missing-character",
+      directory: "characters/missing-character",
+    }),
+    /Character package "missing-character" is missing: characters\/missing-character\//,
+  );
 });
 
 test("attaches Golden comparison information", () => {

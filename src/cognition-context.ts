@@ -20,6 +20,16 @@ export const FEW_SHOT_EVENTS = [
   "user said they want to try something difficult",
 ] as const;
 
+export type CharacterPackageLocation = {
+  id: string;
+  directory: string;
+};
+
+export const CURRENT_CHARACTER_PACKAGE: CharacterPackageLocation = {
+  id: "hiro",
+  directory: "characters/hiro",
+};
+
 export type CharacterPackage = {
   spec: CharacterSpec;
   principles: CharacterPrinciples;
@@ -34,6 +44,24 @@ export type CognitionResources = {
 
 async function readJson(url: URL): Promise<unknown> {
   return JSON.parse(await readFile(url, "utf8"));
+}
+
+async function readCharacterPackageJson(
+  location: CharacterPackageLocation,
+  fileName: string,
+): Promise<unknown> {
+  const relativePath = `${location.directory}/${fileName}`;
+  try {
+    return await readJson(new URL(`../${relativePath}`, import.meta.url));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      throw new Error(
+        `Character package "${location.id}" is missing: ${relativePath}`,
+        { cause: error },
+      );
+    }
+    throw error;
+  }
 }
 
 export function selectFewShotExamples(
@@ -65,7 +93,9 @@ export function createCognitionResources(
   };
 }
 
-export async function loadCognitionResources(): Promise<CognitionResources> {
+export async function loadCognitionResources(
+  characterLocation = CURRENT_CHARACTER_PACKAGE,
+): Promise<CognitionResources> {
   const [
     interactionPolicyJson,
     characterSpecJson,
@@ -73,9 +103,9 @@ export async function loadCognitionResources(): Promise<CognitionResources> {
     bestEvaluationJson,
   ] = await Promise.all([
       readJson(new URL("../interaction-policy.json", import.meta.url)),
-      readJson(new URL("../character-spec.json", import.meta.url)),
-      readJson(new URL("../character-principles.json", import.meta.url)),
-      readJson(new URL("../best-evaluation.json", import.meta.url)),
+      readCharacterPackageJson(characterLocation, "character-spec.json"),
+      readCharacterPackageJson(characterLocation, "character-principles.json"),
+      readCharacterPackageJson(characterLocation, "best-evaluation.json"),
     ]);
 
   const interactionPolicy = interactionPolicySchema.parse(interactionPolicyJson);
