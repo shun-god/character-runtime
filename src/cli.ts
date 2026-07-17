@@ -7,7 +7,7 @@ import { CharacterRuntime } from "./runtime.js";
 import { characterSpecSchema, type RuntimeOutput } from "./schema.js";
 
 function printResult(result: RuntimeOutput): void {
-  console.log(`\ninterpretation:\n${result.interpretation}`);
+  console.log(`\nevent_summary:\n${result.event_summary}`);
   console.log("\nstate_effect:");
   console.log(`energy: ${result.state_effect.energy >= 0 ? "+" : ""}${result.state_effect.energy}`);
   console.log(`affinity: ${result.state_effect.affinity >= 0 ? "+" : ""}${result.state_effect.affinity}`);

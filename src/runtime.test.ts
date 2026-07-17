@@ -22,7 +22,7 @@ const spec: CharacterSpec = {
 };
 
 const output: RuntimeOutput = {
-  interpretation: "ユーザーは疲れているように見える。",
+  event_summary: "ユーザーが帰宅した。",
   state_effect: { energy: -2, affinity: 1, mood: "concerned" },
   action_intent: { type: "respond" },
   speech: "おかえり、プロデューサー。",
@@ -30,7 +30,7 @@ const output: RuntimeOutput = {
 };
 
 const waitOutput: RuntimeOutput = {
-  interpretation: "ユーザーはしばらく静かにしている。",
+  event_summary: "ユーザーがしばらく発話していない。",
   state_effect: { energy: 0, affinity: 0, mood: "calm" },
   action_intent: { type: "wait" },
   speech: null,
@@ -38,7 +38,7 @@ const waitOutput: RuntimeOutput = {
 };
 
 const reactionOutput: RuntimeOutput = {
-  interpretation: "ユーザーはこちらを見ている。",
+  event_summary: "ユーザーがこちらを見ている。",
   state_effect: { energy: 0, affinity: 0, mood: "calm" },
   action_intent: { type: "show_reaction" },
   speech: null,
@@ -115,6 +115,22 @@ test("accepts valid structured responses without network access", () => {
   );
 });
 
+test("rejects the old interpretation field and a missing event_summary", () => {
+  const { event_summary, ...withoutSummary } = output;
+
+  assert.throws(
+    () =>
+      parseGeminiRuntimeOutput(
+        JSON.stringify({ ...withoutSummary, interpretation: event_summary }),
+      ),
+    /Gemini response does not match RuntimeOutput/,
+  );
+  assert.throws(
+    () => parseGeminiRuntimeOutput(JSON.stringify(withoutSummary)),
+    /Gemini response does not match RuntimeOutput/,
+  );
+});
+
 test("rejects malformed or invalid action combinations", () => {
   assert.throws(
     () => parseGeminiRuntimeOutput(""),
@@ -125,7 +141,7 @@ test("rejects malformed or invalid action combinations", () => {
     /Gemini returned invalid JSON/,
   );
   assert.throws(
-    () => parseGeminiRuntimeOutput('{"interpretation":"missing fields"}'),
+    () => parseGeminiRuntimeOutput('{"event_summary":"missing fields"}'),
     /Gemini response does not match RuntimeOutput/,
   );
   assert.throws(

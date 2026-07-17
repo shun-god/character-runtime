@@ -29,7 +29,7 @@ const stateEffectSchema = z.object({
 });
 
 const runtimeOutputFields = {
-  interpretation: z.string(),
+  event_summary: z.string(),
   state_effect: stateEffectSchema,
 };
 

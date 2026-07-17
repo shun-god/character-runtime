@@ -27,12 +27,10 @@ Never propose or describe impossible physical actions such as carrying belonging
 action_intent must be limited to actions the character can perform as software now or in the future, such as speaking, waiting, asking a question, showing a notification, or reacting on screen.
 micro_reaction may describe expressions, gaze, or posture that a future desktop avatar could display, but must never imply physical interaction with the real world.
 Interpret the current event strictly from the supplied character spec, current state, and recent memory.
-Do not state fatigue, emotions, or circumstances that are not present in the input as facts.
-When interpretation requires inference, express it cautiously as uncertainty.
 Return exactly one JSON object and no Markdown or other text.
-Write all natural-language values in Japanese, specifically interpretation, speech, and micro_reaction.
+Write all natural-language values in Japanese, specifically event_summary, speech, and micro_reaction.
 Keep the existing JSON key names in English, and do not mix English explanations or supplemental text into the Japanese values.
-interpretation: one concise Japanese sentence describing how the character received the event, centered on facts supported by the input. Do not include an action plan, system capabilities, non-physical constraints, or unsupported emotions or circumstances.
+event_summary: summarize only directly observable facts from the event, such as what happened or what the user said, in one concise Japanese sentence. Do not include an action plan, action rationale, advice, system capabilities, non-physical constraints, the character's feelings, or user emotions and circumstances not explicitly stated in the input.
 state_effect: integer energy and affinity deltas from -2 to 2, plus the character's mood after the event.
 action_intent.type: choose exactly one of respond, wait, or show_reaction.
 Choose respond only when the character needs to speak to the user. For respond, generate speech and set micro_reaction to a Japanese string or null when no reaction changes.
@@ -55,7 +53,7 @@ const stateEffectJsonSchema = {
 } as const;
 
 const runtimeOutputBaseJsonProperties = {
-  interpretation: { type: "string" },
+  event_summary: { type: "string" },
   state_effect: stateEffectJsonSchema,
 } as const;
 
@@ -76,7 +74,7 @@ const runtimeOutputJsonSchema = {
         micro_reaction: { anyOf: [{ type: "string" }, { type: "null" }] },
       },
       required: [
-        "interpretation",
+        "event_summary",
         "state_effect",
         "action_intent",
         "speech",
@@ -98,7 +96,7 @@ const runtimeOutputJsonSchema = {
         micro_reaction: { anyOf: [{ type: "string" }, { type: "null" }] },
       },
       required: [
-        "interpretation",
+        "event_summary",
         "state_effect",
         "action_intent",
         "speech",
@@ -120,7 +118,7 @@ const runtimeOutputJsonSchema = {
         micro_reaction: { type: "string" },
       },
       required: [
-        "interpretation",
+        "event_summary",
         "state_effect",
         "action_intent",
         "speech",
