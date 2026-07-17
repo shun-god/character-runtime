@@ -12,14 +12,21 @@ export const characterSpecSchema = z.object({
   identity: z.object({
     name: z.string(),
     role: z.string(),
+    first_person: z.string(),
+    user_address: z.string().default("ユーザー"),
   }),
   personality: z.array(z.string()),
   values: z.array(z.string()),
+  relationship: z.object({
+    user_role: z.string(),
+    traits: z.array(z.string()),
+  }),
   speech_style: z.object({
     language: z.string(),
     tone: z.string(),
-    user_address: z.string(),
+    guidelines: z.array(z.string()),
   }),
+  behavior_preferences: z.array(z.string()),
 });
 
 const stateEffectSchema = z.object({

@@ -8,17 +8,31 @@ import {
 } from "./cognition.js";
 import { RecentMemory } from "./memory.js";
 import { CharacterRuntime } from "./runtime.js";
-import type { CharacterSpec, RuntimeOutput } from "./schema.js";
+import {
+  characterSpecSchema,
+  type CharacterSpec,
+  type RuntimeOutput,
+} from "./schema.js";
 
 const spec: CharacterSpec = {
-  identity: { name: "Mio", role: "companion" },
+  identity: {
+    name: "篠澤広",
+    role: "companion",
+    first_person: "わたし",
+    user_address: "プロデューサー",
+  },
   personality: ["observant"],
   values: ["well-being"],
+  relationship: {
+    user_role: "producer",
+    traits: ["equal relationship"],
+  },
   speech_style: {
     language: "Japanese",
     tone: "soft",
-    user_address: "プロデューサー",
+    guidelines: ["avoid excessive formality"],
   },
+  behavior_preferences: ["prefer waiting when uncertain"],
 };
 
 const output: RuntimeOutput = {
@@ -61,6 +75,31 @@ class InvalidOutputEngine implements CognitionEngine {
     );
   }
 }
+
+test("validates character specs and resolves the user address", () => {
+  assert.equal(characterSpecSchema.parse(spec).identity.user_address, "プロデューサー");
+
+  const { user_address: ignoredUserAddress, ...identityWithoutAddress } =
+    spec.identity;
+  const withoutAddress = {
+    ...spec,
+    identity: identityWithoutAddress,
+  };
+  assert.equal(
+    characterSpecSchema.parse(withoutAddress).identity.user_address,
+    "ユーザー",
+  );
+
+  const { name: ignoredName, ...identityWithoutName } = spec.identity;
+  assert.throws(
+    () =>
+      characterSpecSchema.parse({
+        ...spec,
+        identity: identityWithoutName,
+      }),
+    /Required/,
+  );
+});
 
 test("applies state effects and supplies updated state and memory next time", async () => {
   const engine = new StubEngine();

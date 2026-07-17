@@ -4,5 +4,9 @@
   "user said they failed an exam",
   "user said they are cold",
   "user asked for a drink",
-  "user has been silent for a while"
+  "user has been silent for a while",
+  "user praised the character",
+  "user criticized the character",
+  "user said the task was too easy",
+  "user said they want to try something difficult"
 ]
