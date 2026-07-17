@@ -1,4 +1,11 @@
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
+
+import type { z } from "zod";
+
+import {
+  resolveCharacterPackageLocation,
+  type CharacterPackageLocation,
+} from "./character-selection.js";
 
 import {
   bestEvaluationSchema,
@@ -20,16 +27,6 @@ export const FEW_SHOT_EVENTS = [
   "user said they want to try something difficult",
 ] as const;
 
-export type CharacterPackageLocation = {
-  id: string;
-  directory: string;
-};
-
-export const CURRENT_CHARACTER_PACKAGE: CharacterPackageLocation = {
-  id: "hiro",
-  directory: "characters/hiro",
-};
-
 export type CharacterPackage = {
   spec: CharacterSpec;
   principles: CharacterPrinciples;
@@ -46,21 +43,65 @@ async function readJson(url: URL): Promise<unknown> {
   return JSON.parse(await readFile(url, "utf8"));
 }
 
+const errorMessage = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
+
+async function ensureCharacterPackageDirectory(
+  location: CharacterPackageLocation,
+): Promise<void> {
+  try {
+    const directory = await stat(
+      new URL(`../${location.directory}/`, import.meta.url),
+    );
+    if (directory.isDirectory()) {
+      return;
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw error;
+    }
+  }
+  throw new Error(
+    `Character package "${location.id}" was not found: ${location.directory}`,
+  );
+}
+
 async function readCharacterPackageJson(
   location: CharacterPackageLocation,
-  fileName: string,
+  relativePath: string,
 ): Promise<unknown> {
-  const relativePath = `${location.directory}/${fileName}`;
   try {
     return await readJson(new URL(`../${relativePath}`, import.meta.url));
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       throw new Error(
-        `Character package "${location.id}" is missing: ${relativePath}`,
+        `Character package "${location.id}" is missing required file: ${relativePath}`,
+        { cause: error },
+      );
+    }
+    if (error instanceof SyntaxError) {
+      throw new Error(
+        `Character package "${location.id}" has invalid JSON in ${relativePath}: ${error.message}`,
         { cause: error },
       );
     }
     throw error;
+  }
+}
+
+function parseCharacterPackageFile<T extends z.ZodTypeAny>(
+  schema: T,
+  value: unknown,
+  location: CharacterPackageLocation,
+  relativePath: string,
+): z.infer<T> {
+  try {
+    return schema.parse(value);
+  } catch (error) {
+    throw new Error(
+      `Character package "${location.id}" failed validation for ${relativePath}: ${errorMessage(error)}`,
+      { cause: error },
+    );
   }
 }
 
@@ -94,8 +135,10 @@ export function createCognitionResources(
 }
 
 export async function loadCognitionResources(
-  characterLocation = CURRENT_CHARACTER_PACKAGE,
+  options: { characterId: string },
 ): Promise<CognitionResources> {
+  const characterLocation = resolveCharacterPackageLocation(options.characterId);
+  await ensureCharacterPackageDirectory(characterLocation);
   const [
     interactionPolicyJson,
     characterSpecJson,
@@ -103,22 +146,48 @@ export async function loadCognitionResources(
     bestEvaluationJson,
   ] = await Promise.all([
       readJson(new URL("../interaction-policy.json", import.meta.url)),
-      readCharacterPackageJson(characterLocation, "character-spec.json"),
-      readCharacterPackageJson(characterLocation, "character-principles.json"),
-      readCharacterPackageJson(characterLocation, "best-evaluation.json"),
+      readCharacterPackageJson(characterLocation, characterLocation.specPath),
+      readCharacterPackageJson(
+        characterLocation,
+        characterLocation.principlesPath,
+      ),
+      readCharacterPackageJson(
+        characterLocation,
+        characterLocation.goldenEvaluationPath,
+      ),
     ]);
 
   const interactionPolicy = interactionPolicySchema.parse(interactionPolicyJson);
-  const characterSpec = characterSpecSchema.parse(characterSpecJson);
-  const characterPrinciples = characterPrinciplesSchema.parse(
+  const characterSpec = parseCharacterPackageFile(
+    characterSpecSchema,
+    characterSpecJson,
+    characterLocation,
+    characterLocation.specPath,
+  );
+  const characterPrinciples = parseCharacterPackageFile(
+    characterPrinciplesSchema,
     characterPrinciplesJson,
+    characterLocation,
+    characterLocation.principlesPath,
   );
-  const bestEvaluation = bestEvaluationSchema.parse(bestEvaluationJson);
+  const bestEvaluation = parseCharacterPackageFile(
+    bestEvaluationSchema,
+    bestEvaluationJson,
+    characterLocation,
+    characterLocation.goldenEvaluationPath,
+  );
 
-  return createCognitionResources(
-    interactionPolicy,
-    characterSpec,
-    characterPrinciples,
-    bestEvaluation,
-  );
+  try {
+    return createCognitionResources(
+      interactionPolicy,
+      characterSpec,
+      characterPrinciples,
+      bestEvaluation,
+    );
+  } catch (error) {
+    throw new Error(
+      `Character package "${characterLocation.id}" could not select required few-shot examples: ${errorMessage(error)}`,
+      { cause: error },
+    );
+  }
 }

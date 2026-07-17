@@ -3,8 +3,10 @@ import { fileURLToPath } from "node:url";
 
 import { z } from "zod";
 
+import { resolveCharacterId } from "../src/character-selection.js";
 import { GeminiCognitionEngine } from "../src/cognition.js";
 import { loadCognitionResources } from "../src/cognition-context.js";
+import { createEvaluationReport } from "../src/evaluation-report.js";
 import {
   createGoldenReference,
   type GoldenReference,
@@ -39,11 +41,12 @@ async function main(): Promise<void> {
   }
 
   const model = process.env.GEMINI_MODEL ?? DEFAULT_MODEL;
+  const characterId = resolveCharacterId(process.argv.slice(2));
   const {
     interactionPolicy,
     characterPackage,
     fewShotExamples,
-  } = await loadCognitionResources();
+  } = await loadCognitionResources({ characterId });
   const bestEvaluation = characterPackage.goldenEvaluation;
   const events = eventsSchema.parse(
     JSON.parse(
@@ -111,11 +114,7 @@ async function main(): Promise<void> {
   await writeFile(
     outputPath,
     `${JSON.stringify(
-      {
-        evaluated_at: evaluatedAt.toISOString(),
-        model,
-        results,
-      },
+      createEvaluationReport({ evaluatedAt, model, characterId, results }),
       null,
       2,
     )}\n`,

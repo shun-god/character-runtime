@@ -1,6 +1,7 @@
 import { createInterface } from "node:readline/promises";
-import { stdin as input, stdout as output } from "node:process";
+import { argv, stdin as input, stdout as output } from "node:process";
 
+import { resolveCharacterId } from "./character-selection.js";
 import { GeminiCognitionEngine } from "./cognition.js";
 import { loadCognitionResources } from "./cognition-context.js";
 import { CharacterRuntime } from "./runtime.js";
@@ -23,8 +24,9 @@ async function main(): Promise<void> {
     throw new Error("GEMINI_API_KEY is not set.");
   }
 
+  const characterId = resolveCharacterId(argv.slice(2));
   const { interactionPolicy, characterPackage, fewShotExamples } =
-    await loadCognitionResources();
+    await loadCognitionResources({ characterId });
   const engine = new GeminiCognitionEngine({
     apiKey,
     model: process.env.GEMINI_MODEL,
@@ -35,6 +37,7 @@ async function main(): Promise<void> {
   const runtime = new CharacterRuntime(characterPackage.spec, engine);
   const cli = createInterface({ input, output });
 
+  console.log(`character: ${characterId}`);
   console.log("Character Runtime v0.1 (type 'exit' to quit)");
 
   try {

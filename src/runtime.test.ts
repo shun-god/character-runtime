@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
+import { mkdir, rm } from "node:fs/promises";
 import test from "node:test";
 
+import {
+  DEFAULT_CHARACTER_ID,
+  resolveCharacterId,
+  resolveCharacterPackageLocation,
+  validateCharacterId,
+} from "./character-selection.js";
 import {
   parseGeminiRuntimeOutput,
   type CognitionEngine,
@@ -13,6 +20,7 @@ import {
   selectFewShotExamples,
 } from "./cognition-context.js";
 import { createGoldenReference } from "./golden-comparison.js";
+import { createEvaluationReport } from "./evaluation-report.js";
 import { RecentMemory } from "./memory.js";
 import { CharacterRuntime } from "./runtime.js";
 import {
@@ -85,6 +93,48 @@ class InvalidOutputEngine implements CognitionEngine {
     );
   }
 }
+
+test("resolves Character ID from argument, environment, and default", () => {
+  const originalCharacterId = process.env.CHARACTER_ID;
+  try {
+    delete process.env.CHARACTER_ID;
+    assert.equal(resolveCharacterId([], process.env), DEFAULT_CHARACTER_ID);
+
+    process.env.CHARACTER_ID = "environment-character";
+    assert.equal(resolveCharacterId([], process.env), "environment-character");
+    assert.equal(
+      resolveCharacterId(["--character", "argument-character"], process.env),
+      "argument-character",
+    );
+    assert.equal(
+      resolveCharacterId(["--character=inline-character"], process.env),
+      "inline-character",
+    );
+  } finally {
+    if (originalCharacterId === undefined) {
+      delete process.env.CHARACTER_ID;
+    } else {
+      process.env.CHARACTER_ID = originalCharacterId;
+    }
+  }
+});
+
+test("validates Character IDs and resolves all package paths", () => {
+  for (const id of ["hiro", "test-character", "character_01"]) {
+    assert.equal(validateCharacterId(id), id);
+  }
+  for (const id of ["../hiro", "/hiro", "hiro/other", "", "has space", "C:\\hiro"]) {
+    assert.throws(() => validateCharacterId(id), /Invalid character ID/);
+  }
+
+  assert.deepEqual(resolveCharacterPackageLocation("hiro"), {
+    id: "hiro",
+    directory: "characters/hiro",
+    specPath: "characters/hiro/character-spec.json",
+    principlesPath: "characters/hiro/character-principles.json",
+    goldenEvaluationPath: "characters/hiro/best-evaluation.json",
+  });
+});
 
 test("validates character specs and resolves the user address", () => {
   assert.equal(characterSpecSchema.parse(spec).identity.user_address, "プロデューサー");
@@ -231,7 +281,7 @@ test("keeps Interaction Policy outside the Character Package", () => {
 });
 
 test("loads the current Character Package and root Interaction Policy", async () => {
-  const resources = await loadCognitionResources();
+  const resources = await loadCognitionResources({ characterId: "hiro" });
 
   assert.equal(resources.characterPackage.spec.identity.name, "篠澤広");
   assert.ok(resources.characterPackage.principles.principles.length > 0);
@@ -246,12 +296,25 @@ test("loads the current Character Package and root Interaction Policy", async ()
 
 test("reports the Character ID and path when a package file is missing", async () => {
   await assert.rejects(
-    loadCognitionResources({
-      id: "missing-character",
-      directory: "characters/missing-character",
-    }),
-    /Character package "missing-character" is missing: characters\/missing-character\//,
+    loadCognitionResources({ characterId: "missing-character" }),
+    /Character package "missing-character" was not found: characters\/missing-character/,
   );
+});
+
+test("reports a required file missing from an existing package", async () => {
+  const characterId = `missing_file_${process.pid}`;
+  const directory = new URL(`../characters/${characterId}/`, import.meta.url);
+  await mkdir(directory, { recursive: true });
+  try {
+    await assert.rejects(
+      loadCognitionResources({ characterId }),
+      new RegExp(
+        `Character package "${characterId}" is missing required file: characters/${characterId}/`,
+      ),
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("attaches Golden comparison information", () => {
@@ -275,6 +338,24 @@ test("attaches Golden comparison information", () => {
     golden_notes: null,
     comparison: null,
   });
+});
+
+test("includes Character ID in evaluation reports", () => {
+  const evaluatedAt = new Date("2026-01-02T03:04:05.000Z");
+  assert.deepEqual(
+    createEvaluationReport({
+      evaluatedAt,
+      model: "model",
+      characterId: "hiro",
+      results: [{ event: "event" }],
+    }),
+    {
+      evaluated_at: "2026-01-02T03:04:05.000Z",
+      model: "model",
+      character_id: "hiro",
+      results: [{ event: "event" }],
+    },
+  );
 });
 
 test("applies state effects and supplies updated state and memory next time", async () => {

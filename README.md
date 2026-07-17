@@ -39,7 +39,18 @@ StateとMemoryはプロセス内だけに保持され、CLI終了時に破棄さ
 - `characters/hiro/character-principles.json`: 現在のキャラクター固有の応答判断
 - `characters/hiro/best-evaluation.json`: 現在のキャラクター固有の理想出力と評価基準。固定応答テーブルではありません
 
-`characters/hiro/`が現在のCharacter Packageです。Character Spec、Character Principles、Best Evaluationで構成され、`interaction-policy.json`はPackage外のRuntime共通設定です。現時点では切り替え機能は未実装で`hiro`を固定利用しますが、将来的なPackage差し替えを想定しています。現在も代表5例だけをFew-shotとして使用し、LLM呼び出しは一回のままです。
+`characters/hiro/`が現在の既定Character Packageです。Character Spec、Character Principles、Best Evaluationで構成され、`interaction-policy.json`はPackage外のRuntime共通設定です。現在も代表5例だけをFew-shotとして使用し、LLM呼び出しは一回のままです。
+
+Character IDの既定値は`hiro`です。`characters/<id>/`からPackageを読み込み、CLI引数、環境変数、既定値の順で決定します。
+
+```powershell
+npm run dev -- --character hiro
+npm run evaluate -- --character hiro
+$env:CHARACTER_ID = "hiro"
+npm run dev
+```
+
+現時点ではCharacter一覧、自動探索、GUIによる切り替えは未実装です。`interaction-policy.json`は全Character共通です。
 
 ## Evaluation
 
