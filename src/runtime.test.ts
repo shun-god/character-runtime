@@ -9,7 +9,7 @@ import {
   validateCharacterId,
 } from "./character-selection.js";
 import {
-  parseGeminiRuntimeOutput,
+  parseGeminiCognitionOutput,
   type CognitionEngine,
   type CognitionInput,
 } from "./cognition.js";
@@ -20,15 +20,20 @@ import {
   selectFewShotExamples,
 } from "./cognition-context.js";
 import { createGoldenReference } from "./golden-comparison.js";
-import { createEvaluationReport } from "./evaluation-report.js";
+import {
+  createCognitionEvaluationFields,
+  createEvaluationReport,
+} from "./evaluation-report.js";
 import { RecentMemory } from "./memory.js";
 import { CharacterRuntime } from "./runtime.js";
 import {
   bestEvaluationSchema,
   characterPrinciplesSchema,
   characterSpecSchema,
+  cognitionOutputSchema,
   interactionPolicySchema,
   type CharacterSpec,
+  type CognitionOutput,
   type RuntimeOutput,
 } from "./schema.js";
 
@@ -77,6 +82,51 @@ const reactionOutput: RuntimeOutput = {
   micro_reaction: "少し首を傾げる",
 };
 
+const cognitionOutput: CognitionOutput = {
+  perception: {
+    known_facts: ["ユーザーが帰宅した"],
+    unknowns: [],
+  },
+  response_plan: {
+    stance: "簡潔に出迎える",
+    should_advise: false,
+    should_ask_question: false,
+    response_length: "short",
+    relevant_character_traits: ["落ち着いた口調"],
+  },
+  runtime_output: output,
+};
+
+const waitCognitionOutput: CognitionOutput = {
+  perception: {
+    known_facts: ["ユーザーがしばらく発話していない"],
+    unknowns: ["沈黙の理由"],
+  },
+  response_plan: {
+    stance: "静かに待つ",
+    should_advise: false,
+    should_ask_question: false,
+    response_length: "none",
+    relevant_character_traits: [],
+  },
+  runtime_output: waitOutput,
+};
+
+const reactionCognitionOutput: CognitionOutput = {
+  perception: {
+    known_facts: ["ユーザーがこちらを見ている"],
+    unknowns: [],
+  },
+  response_plan: {
+    stance: "画面上で小さく反応する",
+    should_advise: false,
+    should_ask_question: false,
+    response_length: "none",
+    relevant_character_traits: [],
+  },
+  runtime_output: reactionOutput,
+};
+
 class StubEngine implements CognitionEngine {
   readonly inputs: CognitionInput[] = [];
 
@@ -88,9 +138,12 @@ class StubEngine implements CognitionEngine {
 
 class InvalidOutputEngine implements CognitionEngine {
   async process(): Promise<RuntimeOutput> {
-    return parseGeminiRuntimeOutput(
-      JSON.stringify({ ...output, speech: null }),
-    );
+    return parseGeminiCognitionOutput(
+      JSON.stringify({
+        ...cognitionOutput,
+        runtime_output: { ...output, speech: null },
+      }),
+    ).runtime_output;
   }
 }
 
@@ -358,6 +411,16 @@ test("includes Character ID in evaluation reports", () => {
   );
 });
 
+test("adds Cognition diagnostics to evaluation event results", () => {
+  assert.deepEqual(createCognitionEvaluationFields(cognitionOutput), {
+    cognition: {
+      perception: cognitionOutput.perception,
+      response_plan: cognitionOutput.response_plan,
+    },
+    output,
+  });
+});
+
 test("applies state effects and supplies updated state and memory next time", async () => {
   const engine = new StubEngine();
   const runtime = new CharacterRuntime(spec, engine);
@@ -368,6 +431,9 @@ test("applies state effects and supplies updated state and memory next time", as
     affinity: 1,
     mood: "concerned",
   });
+  assert.deepEqual(runtime.getMemory()[0]?.output, output);
+  assert.equal("perception" in runtime.getMemory()[0]!, false);
+  assert.equal("response_plan" in runtime.getMemory()[0]!, false);
 
   await runtime.processEvent("user sat down");
   assert.equal(engine.inputs[1]?.currentState.energy, 3);
@@ -403,11 +469,17 @@ test("recent memory keeps only the configured number of entries", () => {
 });
 
 test("accepts valid structured responses without network access", () => {
-  assert.deepEqual(parseGeminiRuntimeOutput(JSON.stringify(output)), output);
-  assert.deepEqual(parseGeminiRuntimeOutput(JSON.stringify(waitOutput)), waitOutput);
   assert.deepEqual(
-    parseGeminiRuntimeOutput(JSON.stringify(reactionOutput)),
-    reactionOutput,
+    parseGeminiCognitionOutput(JSON.stringify(cognitionOutput)),
+    cognitionOutput,
+  );
+  assert.deepEqual(
+    parseGeminiCognitionOutput(JSON.stringify(waitCognitionOutput)),
+    waitCognitionOutput,
+  );
+  assert.deepEqual(
+    parseGeminiCognitionOutput(JSON.stringify(reactionCognitionOutput)),
+    reactionCognitionOutput,
   );
 });
 
@@ -416,57 +488,146 @@ test("rejects the old interpretation field and a missing event_summary", () => {
 
   assert.throws(
     () =>
-      parseGeminiRuntimeOutput(
-        JSON.stringify({ ...withoutSummary, interpretation: event_summary }),
+      parseGeminiCognitionOutput(
+        JSON.stringify({
+          ...cognitionOutput,
+          runtime_output: { ...withoutSummary, interpretation: event_summary },
+        }),
       ),
-    /Gemini response does not match RuntimeOutput/,
+    /Gemini response does not match CognitionOutput/,
   );
   assert.throws(
-    () => parseGeminiRuntimeOutput(JSON.stringify(withoutSummary)),
-    /Gemini response does not match RuntimeOutput/,
+    () =>
+      parseGeminiCognitionOutput(
+        JSON.stringify({ ...cognitionOutput, runtime_output: withoutSummary }),
+      ),
+    /Gemini response does not match CognitionOutput/,
+  );
+});
+
+test("validates Cognition Output limits and response plan consistency", () => {
+  assert.throws(
+    () =>
+      cognitionOutputSchema.parse({
+        ...cognitionOutput,
+        perception: { known_facts: [], unknowns: [] },
+      }),
+    /at least 1 element/,
+  );
+  assert.throws(
+    () =>
+      cognitionOutputSchema.parse({
+        ...cognitionOutput,
+        perception: { known_facts: ["1", "2", "3", "4"], unknowns: [] },
+      }),
+    /at most 3 element/,
+  );
+  assert.throws(
+    () =>
+      cognitionOutputSchema.parse({
+        ...cognitionOutput,
+        perception: {
+          known_facts: ["fact"],
+          unknowns: ["1", "2", "3", "4", "5"],
+        },
+      }),
+    /at most 4 element/,
+  );
+  assert.throws(
+    () =>
+      cognitionOutputSchema.parse({
+        ...cognitionOutput,
+        response_plan: {
+          ...cognitionOutput.response_plan,
+          response_length: "long",
+        },
+      }),
+    /Invalid enum value/,
+  );
+  assert.throws(
+    () =>
+      cognitionOutputSchema.parse({
+        ...cognitionOutput,
+        response_plan: {
+          ...cognitionOutput.response_plan,
+          relevant_character_traits: ["1", "2", "3", "4"],
+        },
+      }),
+    /at most 3 element/,
+  );
+  assert.throws(
+    () =>
+      cognitionOutputSchema.parse({
+        ...cognitionOutput,
+        response_plan: {
+          ...cognitionOutput.response_plan,
+          response_length: "none",
+        },
+      }),
+    /response_length.*none|speech must be null/,
+  );
+  assert.throws(
+    () =>
+      cognitionOutputSchema.parse({
+        ...cognitionOutput,
+        runtime_output: { ...output, speech: null },
+      }),
+    /Invalid input/,
   );
 });
 
 test("rejects malformed or invalid action combinations", () => {
   assert.throws(
-    () => parseGeminiRuntimeOutput(""),
+    () => parseGeminiCognitionOutput(""),
     /Gemini returned an empty response/,
   );
   assert.throws(
-    () => parseGeminiRuntimeOutput("not json"),
+    () => parseGeminiCognitionOutput("not json"),
     /Gemini returned invalid JSON/,
   );
   assert.throws(
-    () => parseGeminiRuntimeOutput('{"event_summary":"missing fields"}'),
-    /Gemini response does not match RuntimeOutput/,
+    () => parseGeminiCognitionOutput('{"event_summary":"missing fields"}'),
+    /Gemini response does not match CognitionOutput/,
   );
   assert.throws(
     () =>
-      parseGeminiRuntimeOutput(
-        JSON.stringify({ ...output, speech: null }),
+      parseGeminiCognitionOutput(
+        JSON.stringify({
+          ...cognitionOutput,
+          runtime_output: { ...output, speech: null },
+        }),
       ),
-    /Gemini response does not match RuntimeOutput/,
+    /Gemini response does not match CognitionOutput/,
   );
   assert.throws(
     () =>
-      parseGeminiRuntimeOutput(
-        JSON.stringify({ ...waitOutput, speech: "話しかける" }),
+      parseGeminiCognitionOutput(
+        JSON.stringify({
+          ...waitCognitionOutput,
+          runtime_output: { ...waitOutput, speech: "話しかける" },
+        }),
       ),
-    /Gemini response does not match RuntimeOutput/,
+    /Gemini response does not match CognitionOutput/,
   );
   assert.throws(
     () =>
-      parseGeminiRuntimeOutput(
-        JSON.stringify({ ...reactionOutput, micro_reaction: null }),
+      parseGeminiCognitionOutput(
+        JSON.stringify({
+          ...reactionCognitionOutput,
+          runtime_output: { ...reactionOutput, micro_reaction: null },
+        }),
       ),
-    /Gemini response does not match RuntimeOutput/,
+    /Gemini response does not match CognitionOutput/,
   );
   assert.throws(
     () =>
-      parseGeminiRuntimeOutput(
-        JSON.stringify({ ...reactionOutput, speech: "話しかける" }),
+      parseGeminiCognitionOutput(
+        JSON.stringify({
+          ...reactionCognitionOutput,
+          runtime_output: { ...reactionOutput, speech: "話しかける" },
+        }),
       ),
-    /Gemini response does not match RuntimeOutput/,
+    /Gemini response does not match CognitionOutput/,
   );
 });
 
@@ -475,7 +636,7 @@ test("does not update state or memory when cognition returns invalid output", as
 
   await assert.rejects(
     runtime.processEvent("event"),
-    /Gemini response does not match RuntimeOutput/,
+    /Gemini response does not match CognitionOutput/,
   );
   assert.deepEqual(runtime.getState(), { energy: 5, affinity: 0, mood: "calm" });
   assert.deepEqual(runtime.getMemory(), []);

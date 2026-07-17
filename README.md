@@ -52,6 +52,12 @@ npm run dev
 
 現時点ではCharacter一覧、自動探索、GUIによる切り替えは未実装です。`interaction-policy.json`は全Character共通です。
 
+## Cognition Output
+
+Cognitionは一回のLLM呼び出しで、中間判断とRuntimeOutputをまとめて生成します。`perception`はEventから確認できる事実と重要な不明情報、`response_plan`は反応姿勢、助言・質問の要否、発話量、関連Character要素を保持します。
+
+Runtimeが実行するのは`runtime_output`だけです。中間判断は診断・評価用でありMemoryへ保存しません。複数LLMレイヤーはまだ実装していません。
+
 ## Evaluation
 
 固定Eventセットを順番に評価し、結果とGolden Evaluationの完全一致比較を `evaluation/results/` に保存します。GoldenがないEventでは、Golden関連フィールドは`null`になります。
