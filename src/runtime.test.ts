@@ -9,6 +9,11 @@ import {
   validateCharacterId,
 } from "./character-selection.js";
 import {
+  createCharacterReferenceCandidates,
+  extractCharacterSpecReferenceCandidates,
+  validateCharacterReferences,
+} from "./character-references.js";
+import {
   parseGeminiCognitionOutput,
   type CognitionEngine,
   type CognitionInput,
@@ -56,7 +61,12 @@ const spec: CharacterSpec = {
     guidelines: ["avoid excessive formality"],
   },
   behavior_preferences: ["prefer waiting when uncertain"],
+  background: ["graduated early"],
 };
+
+const characterPrinciples = characterPrinciplesSchema.parse({
+  principles: ["失敗した場合は静かに支える", "称賛を素直に喜ぶ"],
+});
 
 const output: RuntimeOutput = {
   event_summary: "ユーザーが帰宅した。",
@@ -87,12 +97,15 @@ const cognitionOutput: CognitionOutput = {
     known_facts: ["ユーザーが帰宅した"],
     unknowns: [],
   },
+  character_references: {
+    spec_items: ["observant"],
+    principles: ["失敗した場合は静かに支える"],
+  },
   response_plan: {
     stance: "簡潔に出迎える",
     should_advise: false,
     should_ask_question: false,
     response_length: "short",
-    relevant_character_traits: ["落ち着いた口調"],
   },
   runtime_output: output,
 };
@@ -102,12 +115,12 @@ const waitCognitionOutput: CognitionOutput = {
     known_facts: ["ユーザーがしばらく発話していない"],
     unknowns: ["沈黙の理由"],
   },
+  character_references: { spec_items: [], principles: [] },
   response_plan: {
     stance: "静かに待つ",
     should_advise: false,
     should_ask_question: false,
     response_length: "none",
-    relevant_character_traits: [],
   },
   runtime_output: waitOutput,
 };
@@ -117,15 +130,24 @@ const reactionCognitionOutput: CognitionOutput = {
     known_facts: ["ユーザーがこちらを見ている"],
     unknowns: [],
   },
+  character_references: { spec_items: [], principles: [] },
   response_plan: {
     stance: "画面上で小さく反応する",
     should_advise: false,
     should_ask_question: false,
     response_length: "none",
-    relevant_character_traits: [],
   },
   runtime_output: reactionOutput,
 };
+
+const parseOptions = {
+  characterId: "hiro",
+  characterSpec: spec,
+  characterPrinciples,
+};
+
+const parseTestCognitionOutput = (text: string | undefined): CognitionOutput =>
+  parseGeminiCognitionOutput(text, parseOptions);
 
 class StubEngine implements CognitionEngine {
   readonly inputs: CognitionInput[] = [];
@@ -138,7 +160,7 @@ class StubEngine implements CognitionEngine {
 
 class InvalidOutputEngine implements CognitionEngine {
   async process(): Promise<RuntimeOutput> {
-    return parseGeminiCognitionOutput(
+    return parseTestCognitionOutput(
       JSON.stringify({
         ...cognitionOutput,
         runtime_output: { ...output, speech: null },
@@ -212,6 +234,50 @@ test("validates character specs and resolves the user address", () => {
       }),
     /Required/,
   );
+});
+
+test("extracts explicit Character Spec reference candidates without duplicates", () => {
+  const candidateSpec: CharacterSpec = {
+    identity: {
+      name: "Excluded Name",
+      role: "role item",
+      first_person: "first person item",
+      user_address: "address item",
+    },
+    personality: ["personality item", "shared item"],
+    values: ["value item"],
+    relationship: {
+      user_role: "relationship role item",
+      traits: ["relationship trait item"],
+    },
+    speech_style: {
+      language: "language item",
+      tone: "tone item",
+      guidelines: ["guideline item"],
+    },
+    behavior_preferences: ["behavior item", "shared item"],
+    background: ["background item"],
+  };
+
+  const candidates = extractCharacterSpecReferenceCandidates(candidateSpec);
+  for (const item of [
+    "role item",
+    "first person item",
+    "address item",
+    "personality item",
+    "value item",
+    "relationship role item",
+    "relationship trait item",
+    "language item",
+    "tone item",
+    "guideline item",
+    "behavior item",
+    "background item",
+  ]) {
+    assert.ok(candidates.includes(item), `missing candidate: ${item}`);
+  }
+  assert.equal(candidates.includes("Excluded Name"), false);
+  assert.equal(candidates.filter((item) => item === "shared item").length, 1);
 });
 
 test("validates Interaction Policy", () => {
@@ -415,6 +481,7 @@ test("adds Cognition diagnostics to evaluation event results", () => {
   assert.deepEqual(createCognitionEvaluationFields(cognitionOutput), {
     cognition: {
       perception: cognitionOutput.perception,
+      character_references: cognitionOutput.character_references,
       response_plan: cognitionOutput.response_plan,
     },
     output,
@@ -433,6 +500,7 @@ test("applies state effects and supplies updated state and memory next time", as
   });
   assert.deepEqual(runtime.getMemory()[0]?.output, output);
   assert.equal("perception" in runtime.getMemory()[0]!, false);
+  assert.equal("character_references" in runtime.getMemory()[0]!, false);
   assert.equal("response_plan" in runtime.getMemory()[0]!, false);
 
   await runtime.processEvent("user sat down");
@@ -470,15 +538,15 @@ test("recent memory keeps only the configured number of entries", () => {
 
 test("accepts valid structured responses without network access", () => {
   assert.deepEqual(
-    parseGeminiCognitionOutput(JSON.stringify(cognitionOutput)),
+    parseTestCognitionOutput(JSON.stringify(cognitionOutput)),
     cognitionOutput,
   );
   assert.deepEqual(
-    parseGeminiCognitionOutput(JSON.stringify(waitCognitionOutput)),
+    parseTestCognitionOutput(JSON.stringify(waitCognitionOutput)),
     waitCognitionOutput,
   );
   assert.deepEqual(
-    parseGeminiCognitionOutput(JSON.stringify(reactionCognitionOutput)),
+    parseTestCognitionOutput(JSON.stringify(reactionCognitionOutput)),
     reactionCognitionOutput,
   );
 });
@@ -488,7 +556,7 @@ test("rejects the old interpretation field and a missing event_summary", () => {
 
   assert.throws(
     () =>
-      parseGeminiCognitionOutput(
+      parseTestCognitionOutput(
         JSON.stringify({
           ...cognitionOutput,
           runtime_output: { ...withoutSummary, interpretation: event_summary },
@@ -498,7 +566,7 @@ test("rejects the old interpretation field and a missing event_summary", () => {
   );
   assert.throws(
     () =>
-      parseGeminiCognitionOutput(
+      parseTestCognitionOutput(
         JSON.stringify({ ...cognitionOutput, runtime_output: withoutSummary }),
       ),
     /Gemini response does not match CognitionOutput/,
@@ -548,12 +616,23 @@ test("validates Cognition Output limits and response plan consistency", () => {
     () =>
       cognitionOutputSchema.parse({
         ...cognitionOutput,
-        response_plan: {
-          ...cognitionOutput.response_plan,
-          relevant_character_traits: ["1", "2", "3", "4"],
+        character_references: {
+          spec_items: ["1", "2", "3"],
+          principles: [],
         },
       }),
-    /at most 3 element/,
+    /at most 2 element/,
+  );
+  assert.throws(
+    () =>
+      cognitionOutputSchema.parse({
+        ...cognitionOutput,
+        character_references: {
+          spec_items: [],
+          principles: ["1", "2", "3"],
+        },
+      }),
+    /at most 2 element/,
   );
   assert.throws(
     () =>
@@ -576,22 +655,118 @@ test("validates Cognition Output limits and response plan consistency", () => {
   );
 });
 
+test("validates exact Character Spec and Principle references", () => {
+  assert.deepEqual(
+    createCharacterReferenceCandidates(spec, characterPrinciples),
+    {
+      spec_items: extractCharacterSpecReferenceCandidates(spec),
+      principles: characterPrinciples.principles,
+    },
+  );
+  assert.deepEqual(
+    validateCharacterReferences(cognitionOutput, parseOptions),
+    cognitionOutput,
+  );
+  assert.deepEqual(
+    validateCharacterReferences(
+      {
+        ...cognitionOutput,
+        character_references: { spec_items: [], principles: [] },
+      },
+      parseOptions,
+    ).character_references,
+    { spec_items: [], principles: [] },
+  );
+
+  for (const reference of [
+    "observant paraphrased",
+    "Eventにない情報を補わない",
+    "物理的な行動をとることができない",
+  ]) {
+    assert.throws(
+      () =>
+        validateCharacterReferences(
+          {
+            ...cognitionOutput,
+            character_references: { spec_items: [reference], principles: [] },
+          },
+          parseOptions,
+        ),
+      new RegExp(
+        `Character "hiro" returned an unknown Character Spec reference: ${reference}`,
+      ),
+    );
+  }
+  assert.throws(
+    () =>
+      validateCharacterReferences(
+        {
+          ...cognitionOutput,
+          character_references: {
+            spec_items: [],
+            principles: ["失敗した場合は支える"],
+          },
+        },
+        parseOptions,
+      ),
+    /Character "hiro" returned an unknown Character Principle reference: 失敗した場合は支える/,
+  );
+  assert.throws(
+    () =>
+      parseTestCognitionOutput(
+        JSON.stringify({
+          ...cognitionOutput,
+          character_references: {
+            spec_items: ["存在しない引用"],
+            principles: [],
+          },
+        }),
+      ),
+    /Character "hiro" returned an unknown Character Spec reference: 存在しない引用/,
+  );
+  assert.throws(
+    () =>
+      cognitionOutputSchema.parse({
+        ...cognitionOutput,
+        character_references: {
+          spec_items: ["observant", "observant"],
+          principles: [],
+        },
+      }),
+    /must not contain duplicates/,
+  );
+  assert.throws(
+    () =>
+      cognitionOutputSchema.parse({
+        ...cognitionOutput,
+        character_references: {
+          spec_items: [],
+          principles: [
+            "失敗した場合は静かに支える",
+            "失敗した場合は静かに支える",
+          ],
+        },
+      }),
+    /must not contain duplicates/,
+  );
+});
+
 test("rejects malformed or invalid action combinations", () => {
   assert.throws(
-    () => parseGeminiCognitionOutput(""),
+    () => parseTestCognitionOutput(""),
     /Gemini returned an empty response/,
   );
   assert.throws(
-    () => parseGeminiCognitionOutput("not json"),
+    () => parseTestCognitionOutput("not json"),
     /Gemini returned invalid JSON/,
   );
   assert.throws(
-    () => parseGeminiCognitionOutput('{"event_summary":"missing fields"}'),
+    () => parseTestCognitionOutput('{"event_summary":"missing fields"}'),
     /Gemini response does not match CognitionOutput/,
   );
   assert.throws(
     () =>
-      parseGeminiCognitionOutput(
+      parseTestCognitionOutput(
         JSON.stringify({
           ...cognitionOutput,
           runtime_output: { ...output, speech: null },
@@ -601,7 +776,7 @@ test("rejects malformed or invalid action combinations", () => {
   );
   assert.throws(
     () =>
-      parseGeminiCognitionOutput(
+      parseTestCognitionOutput(
         JSON.stringify({
           ...waitCognitionOutput,
           runtime_output: { ...waitOutput, speech: "話しかける" },
@@ -611,7 +786,7 @@ test("rejects malformed or invalid action combinations", () => {
   );
   assert.throws(
     () =>
-      parseGeminiCognitionOutput(
+      parseTestCognitionOutput(
         JSON.stringify({
           ...reactionCognitionOutput,
           runtime_output: { ...reactionOutput, micro_reaction: null },
@@ -621,7 +796,7 @@ test("rejects malformed or invalid action combinations", () => {
   );
   assert.throws(
     () =>
-      parseGeminiCognitionOutput(
+      parseTestCognitionOutput(
         JSON.stringify({
           ...reactionCognitionOutput,
           runtime_output: { ...reactionOutput, speech: "話しかける" },

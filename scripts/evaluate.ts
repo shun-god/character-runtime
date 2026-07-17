@@ -73,6 +73,7 @@ async function main(): Promise<void> {
     const golden = bestEvaluation.results.find((result) => result.event === event);
     const cognitionEngine = new GeminiCognitionEngine({
       apiKey,
+      characterId,
       model,
       interactionPolicy,
       characterPrinciples: characterPackage.principles,

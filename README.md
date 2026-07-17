@@ -54,9 +54,11 @@ npm run dev
 
 ## Cognition Output
 
-Cognitionは一回のLLM呼び出しで、中間判断とRuntimeOutputをまとめて生成します。`perception`はEventから確認できる事実と重要な不明情報、`response_plan`は反応姿勢、助言・質問の要否、発話量、関連Character要素を保持します。
+Cognitionは一回のLLM呼び出しで、中間判断とRuntimeOutputをまとめて生成します。`perception`はEventから確認できる事実と重要な不明情報、`response_plan`は反応姿勢、助言・質問の要否、発話量を保持します。
 
-Runtimeが実行するのは`runtime_output`だけです。中間判断は診断・評価用でありMemoryへ保存しません。複数LLMレイヤーはまだ実装していません。
+`character_references`はCharacter SpecとCharacter Principlesへ分け、入力された設定文を完全一致で引用します。Character SpecへIDを付ける必要はなく、存在しない引用はCognition Output検証で拒否します。Interaction PolicyはCharacter参照へ含めません。
+
+Runtimeが実行するのは`runtime_output`だけです。Character参照を含む中間判断は診断・評価用であり、RuntimeやMemoryへ渡しません。LLM呼び出しは一回のままで、複数LLMレイヤーはまだ実装していません。
 
 ## Evaluation
 

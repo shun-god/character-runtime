@@ -29,6 +29,7 @@ async function main(): Promise<void> {
     await loadCognitionResources({ characterId });
   const engine = new GeminiCognitionEngine({
     apiKey,
+    characterId,
     model: process.env.GEMINI_MODEL,
     interactionPolicy,
     characterPrinciples: characterPackage.principles,

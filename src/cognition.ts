@@ -2,6 +2,10 @@ import { GoogleGenAI } from "@google/genai";
 import { z } from "zod";
 
 import {
+  createCharacterReferenceCandidates,
+  validateCharacterReferences,
+} from "./character-references.js";
+import {
   cognitionOutputSchema,
   type BestEvaluationResult,
   type CharacterPrinciples,
@@ -37,7 +41,7 @@ Use character_spec.identity.user_address when addressing the user; it has alread
 Express the spec through choices and wording without quoting it, listing it, or explaining the character settings to the user.
 Keep event_summary factual and independent of the character's personality.
 Return exactly one Cognition Output JSON object and no Markdown or other text. Output only short conclusions in each field, never a detailed chain of thought or long-form reasoning.
-Write all natural-language values in Japanese, including perception, response_plan, event_summary, speech, and micro_reaction.
+Write all natural-language values in Japanese, including perception, character_references, response_plan, event_summary, speech, and micro_reaction.
 Keep the existing JSON key names in English, and do not mix English explanations or supplemental text into the Japanese values.
 event_summary: summarize only directly observable facts from the event, such as what happened or what the user said, in one concise Japanese sentence. Do not include an action plan, action rationale, advice, system capabilities, non-physical constraints, the character's feelings, or user emotions and circumstances not explicitly stated in the input.
 state_effect: integer energy and affinity deltas from -2 to 2, plus the character's mood after the event.
@@ -58,11 +62,16 @@ Current state and memory provide context but must not override facts in the curr
 const COGNITION_PROCEDURE = `# Output Procedure
 1. Put only facts directly stated by the current event into perception.known_facts. Use one to three short paraphrases without evaluation or inference.
 2. Put only important, inference-prone missing information into perception.unknowns, up to four items. Never state these unknowns as facts in event_summary, speech, or micro_reaction.
-3. Select at most three character traits or principles directly relevant to this event. Do not project the character's background or experiences onto the user.
+3. Select Character references only from character_reference_candidates. Copy each selected string exactly, without paraphrasing, shortening, translating, or generalizing it. Select at most two spec_items and at most two principles.
 4. Decide a short response_plan stance, whether concrete advice is needed, whether a practical question is needed, and response length before generating runtime_output.
 5. Generate runtime_output consistent with the response plan, then check the two structures for contradictions.
 
 response_plan.stance is a short phrase or one sentence and must not be repeated or explained in speech.
+Select a Character reference only when it materially changes stance, action_intent, speech, or micro_reaction and omitting it would produce a generic character response. Do not select an item merely because it is generally characteristic, mentions the producer, seems emotionally related, shares words with the Event, or is loosely related background.
+Prefer a directly applicable Character Principle. Use Character Spec items only when a Principle is insufficient to determine the reaction or expression. Both arrays may be empty.
+Never put Interaction Policy, Runtime Rules, physical limitations, software identity, model knowledge, or an invented interpretation in character_references. These rules still apply to response_plan and runtime_output without being Character references.
+Do not describe sources or constraints in stance. State only how the character will react.
+Do not project the character's background or experiences onto the user.
 Set should_advise to true only for an explicit consultation, request for advice, or request for explanation. When false, do not add procedures, multiple remedies, or unsolicited general advice.
 Set should_ask_question to true only when a question has a practical purpose or is a short character-specific offer. When false, do not end speech with a question or add a question merely to continue conversation.
 Use response_length none when there is no speech, short for one sentence or a very short two-sentence response, and medium only for an explicit consultation or explanation request.
@@ -181,6 +190,25 @@ const cognitionOutputJsonSchema = {
       },
       required: ["known_facts", "unknowns"],
     },
+    character_references: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        spec_items: {
+          type: "array",
+          maxItems: 2,
+          uniqueItems: true,
+          items: { type: "string" },
+        },
+        principles: {
+          type: "array",
+          maxItems: 2,
+          uniqueItems: true,
+          items: { type: "string" },
+        },
+      },
+      required: ["spec_items", "principles"],
+    },
     response_plan: {
       type: "object",
       additionalProperties: false,
@@ -192,23 +220,22 @@ const cognitionOutputJsonSchema = {
           type: "string",
           enum: ["none", "short", "medium"],
         },
-        relevant_character_traits: {
-          type: "array",
-          maxItems: 3,
-          items: { type: "string" },
-        },
       },
       required: [
         "stance",
         "should_advise",
         "should_ask_question",
         "response_length",
-        "relevant_character_traits",
       ],
     },
     runtime_output: runtimeOutputJsonSchema,
   },
-  required: ["perception", "response_plan", "runtime_output"],
+  required: [
+    "perception",
+    "character_references",
+    "response_plan",
+    "runtime_output",
+  ],
 } as const;
 
 const errorMessage = (error: unknown): string =>
@@ -216,6 +243,11 @@ const errorMessage = (error: unknown): string =>
 
 export function parseGeminiCognitionOutput(
   text: string | undefined,
+  options: {
+    characterId: string;
+    characterSpec: CharacterSpec;
+    characterPrinciples: CharacterPrinciples;
+  },
 ): CognitionOutput {
   if (!text?.trim()) {
     throw new Error("Gemini returned an empty response.");
@@ -230,8 +262,9 @@ export function parseGeminiCognitionOutput(
     });
   }
 
+  let output: CognitionOutput;
   try {
-    return cognitionOutputSchema.parse(parsed);
+    output = cognitionOutputSchema.parse(parsed);
   } catch (error) {
     const details =
       error instanceof z.ZodError
@@ -243,11 +276,14 @@ export function parseGeminiCognitionOutput(
       cause: error,
     });
   }
+
+  return validateCharacterReferences(output, options);
 }
 
 export class GeminiCognitionEngine implements CognitionEngine {
   readonly #client: GoogleGenAI;
   readonly #model: string;
+  readonly #characterId: string;
   readonly #interactionPolicy: InteractionPolicy;
   readonly #characterPrinciples: CharacterPrinciples;
   readonly #fewShotExamples: readonly BestEvaluationResult[];
@@ -255,12 +291,14 @@ export class GeminiCognitionEngine implements CognitionEngine {
 
   constructor(options: {
     apiKey: string;
+    characterId: string;
     model?: string;
     interactionPolicy: InteractionPolicy;
     characterPrinciples: CharacterPrinciples;
     fewShotExamples: readonly BestEvaluationResult[];
   }) {
     this.#client = new GoogleGenAI({ apiKey: options.apiKey });
+    this.#characterId = options.characterId;
     this.#model = options.model ?? "gemini-3.1-flash-lite";
     this.#interactionPolicy = options.interactionPolicy;
     this.#characterPrinciples = options.characterPrinciples;
@@ -293,6 +331,10 @@ export class GeminiCognitionEngine implements CognitionEngine {
             interaction_policy: this.#interactionPolicy,
             character_spec: input.characterSpec,
             character_principles: this.#characterPrinciples,
+            character_reference_candidates: createCharacterReferenceCandidates(
+              input.characterSpec,
+              this.#characterPrinciples,
+            ),
             examples: this.#fewShotExamples,
             current_context: {
               current_state: input.currentState,
@@ -324,7 +366,11 @@ export class GeminiCognitionEngine implements CognitionEngine {
       });
     }
 
-    const cognitionOutput = parseGeminiCognitionOutput(responseText);
+    const cognitionOutput = parseGeminiCognitionOutput(responseText, {
+      characterId: this.#characterId,
+      characterSpec: input.characterSpec,
+      characterPrinciples: this.#characterPrinciples,
+    });
     this.#lastCognitionOutput = cognitionOutput;
     return cognitionOutput.runtime_output;
   }

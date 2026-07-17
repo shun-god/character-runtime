@@ -27,6 +27,7 @@ export const characterSpecSchema = z.object({
     guidelines: z.array(z.string()),
   }),
   behavior_preferences: z.array(z.string()),
+  background: z.array(z.string()).default([]),
 });
 
 const nonEmptyStringSchema = z.string().trim().min(1);
@@ -69,12 +70,25 @@ export const cognitionOutputSchema = z
       known_facts: z.array(nonEmptyStringSchema).min(1).max(3),
       unknowns: z.array(nonEmptyStringSchema).max(4),
     }),
+    character_references: z.object({
+      spec_items: z
+        .array(nonEmptyStringSchema)
+        .max(2)
+        .refine((items) => new Set(items).size === items.length, {
+          message: "Character Spec references must not contain duplicates",
+        }),
+      principles: z
+        .array(nonEmptyStringSchema)
+        .max(2)
+        .refine((items) => new Set(items).size === items.length, {
+          message: "Character Principle references must not contain duplicates",
+        }),
+    }),
     response_plan: z.object({
       stance: nonEmptyStringSchema,
       should_advise: z.boolean(),
       should_ask_question: z.boolean(),
       response_length: z.enum(["none", "short", "medium"]),
-      relevant_character_traits: z.array(nonEmptyStringSchema).max(3),
     }),
     runtime_output: runtimeOutputSchema,
   })
