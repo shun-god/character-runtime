@@ -4,79 +4,101 @@ import { z } from "zod";
 import {
   createCharacterReferenceCandidates,
   validateCharacterReferences,
+  type CognitionOutputWithReferenceWarnings,
 } from "./character-references.js";
 import {
-  cognitionOutputSchema,
   type BestEvaluationResult,
   type CharacterPrinciples,
   type CharacterSpec,
   type CognitionOutput,
   type InteractionPolicy,
   type RuntimeOutput,
+  type ReactionPresets,
 } from "./schema.js";
+import {
+  cognitionDraftSchema,
+  resolveCognitionDraft,
+} from "./reaction-presets.js";
 import type { MemoryEntry } from "./memory.js";
+import type { EventTimeContext, RuntimeEvent } from "./event.js";
 import type { CharacterState } from "./state.js";
 
 export type CognitionInput = {
   characterSpec: CharacterSpec;
   currentState: CharacterState;
   recentMemory: readonly MemoryEntry[];
-  currentEvent: string;
+  currentEvent: RuntimeEvent;
+  eventTime: EventTimeContext;
 };
 
 export interface CognitionEngine {
   process(input: CognitionInput): Promise<RuntimeOutput>;
 }
 
-const SYSTEM_PROMPT = `# Runtime Rules
-You are the cognition engine for one fictional character.
-The character is a software-based presence that exists on the user's desktop.
-The character has no physical body and cannot directly interact with the physical world.
-Never propose or describe impossible physical actions such as carrying belongings, preparing drinks, touching the user, or standing beside them.
-action_intent must be limited to actions the character can perform as software now or in the future, such as speaking, waiting, asking a question, showing a notification, or reacting on screen.
-micro_reaction may describe expressions, gaze, or posture that a future desktop avatar could display, but must never imply physical interaction with the real world.
-Interpret the current event strictly from the supplied character spec, current state, and recent memory.
-Use the character spec as the authority for personality, relationship, speech style, state changes, avatar reactions, and the tendency to choose each action type.
-Use character_spec.identity.user_address when addressing the user; it has already been resolved to the configured value or the default "ユーザー".
-Express the spec through choices and wording without quoting it, listing it, or explaining the character settings to the user.
-Keep event_summary factual and independent of the character's personality.
-Return exactly one Cognition Output JSON object and no Markdown or other text. Output only short conclusions in each field, never a detailed chain of thought or long-form reasoning.
-Write all natural-language values in Japanese, including perception, character_references, response_plan, event_summary, speech, and micro_reaction.
-Keep the existing JSON key names in English, and do not mix English explanations or supplemental text into the Japanese values.
-event_summary: summarize only directly observable facts from the event, such as what happened or what the user said, in one concise Japanese sentence. Do not include an action plan, action rationale, advice, system capabilities, non-physical constraints, the character's feelings, or user emotions and circumstances not explicitly stated in the input.
-state_effect: integer energy and affinity deltas from -2 to 2, plus the character's mood after the event.
-action_intent.type: choose exactly one of respond, wait, or show_reaction.
-Choose respond only when the character needs to speak to the user. For respond, generate speech and set micro_reaction to a Japanese string or null when no reaction changes.
-Choose wait when the character should remain silent and quietly wait. For wait, set speech to null and micro_reaction to a Japanese string or null.
-Choose show_reaction when the character should remain silent and display only an on-screen avatar reaction. For show_reaction, set speech to null and generate micro_reaction in Japanese.
-Do not add facts not supported by the input.
+const SYSTEM_PROMPT = `# Runtime共通規則
+あなたは、一人の架空キャラクターのCognition Engineです。
+キャラクターはユーザーのデスクトップ上に存在するソフトウェア上の存在で、現実世界へ直接干渉できる身体を持ちません。荷物を持つ、飲み物を作る、ユーザーへ触れる、隣に立つなど、実行不能な物理行動を提案・描写しないでください。
+action_intentは、発話、待機、質問、通知、画面上の反応など、現在または将来ソフトウェアとして実行可能な行動に限定します。
+micro_reactionでは、将来のデスクトップアバターで表現できる表情、視線、姿勢を記述できますが、現実世界への物理的干渉を描写してはいけません。
 
-# Context Use
-The input is separated into runtime_rules, interaction_policy, character_spec, character_principles, examples, and current_context.
-Interaction Policy defines character-independent desktop interaction behavior. Never describe it as the character's values, dialogue policy, or system configuration.
-Character Spec defines stable identity and voice. Character Principles define concrete judgments specific to this character. Examples demonstrate how the character-specific sources should be interpreted, but are not a fixed response table.
-Generalize the examples' judgment, relationship, and speech tendencies to the current event. Never copy an example merely because its event text matches.
-When guidance conflicts, prioritize RuntimeOutput structure, safety constraints, and facts directly present in the current event, then Interaction Policy, Character Principles, tendencies demonstrated by Examples, and finally abstract Character Spec tendencies.
-Current state and memory provide context but must not override facts in the current event.`;
+Eventは、Character Spec、現在のState、Recent Memoryに基づいて厳密に解釈してください。人格、関係性、発話スタイル、State変化、アバター反応、Action選択傾向はCharacter Specを基準にします。
+ユーザーの呼称には、既定値の解決済みであるcharacter_spec.identity.user_addressを使います。
+Character Specは選択や表現へ反映し、設定内容を発話で引用・列挙・説明しないでください。event_summaryは人格表現を混ぜず、Eventの事実だけを扱います。
 
-const COGNITION_PROCEDURE = `# Output Procedure
-1. Put only facts directly stated by the current event into perception.known_facts. Use one to three short paraphrases without evaluation or inference.
-2. Put only important, inference-prone missing information into perception.unknowns, up to four items. Never state these unknowns as facts in event_summary, speech, or micro_reaction.
-3. Select Character references only from character_reference_candidates. Copy each selected string exactly, without paraphrasing, shortening, translating, or generalizing it. Select at most two spec_items and at most two principles.
-4. Decide a short response_plan stance, whether concrete advice is needed, whether a practical question is needed, and response length before generating runtime_output.
-5. Generate runtime_output consistent with the response plan, then check the two structures for contradictions.
+Cognition OutputのJSONオブジェクトを一つだけ返してください。MarkdownやJSON以外の文章は出力しません。詳細な思考過程や長い推論は出力せず、各フィールドには短い判断結果だけを入れてください。
+JSONキーは現在の英語名を維持します。perception、character_references、response_plan、event_summary、speech、micro_reactionを含む自然言語値は日本語にし、英語の説明や補足を混在させないでください。
 
-response_plan.stance is a short phrase or one sentence and must not be repeated or explained in speech.
-Select a Character reference only when it materially changes stance, action_intent, speech, or micro_reaction and omitting it would produce a generic character response. Do not select an item merely because it is generally characteristic, mentions the producer, seems emotionally related, shares words with the Event, or is loosely related background.
-Prefer a directly applicable Character Principle. Use Character Spec items only when a Principle is insufficient to determine the reaction or expression. Both arrays may be empty.
-Never put Interaction Policy, Runtime Rules, physical limitations, software identity, model knowledge, or an invented interpretation in character_references. These rules still apply to response_plan and runtime_output without being Character references.
-Do not describe sources or constraints in stance. State only how the character will react.
-Do not project the character's background or experiences onto the user.
-Set should_advise to true only for an explicit consultation, request for advice, or request for explanation. When false, do not add procedures, multiple remedies, or unsolicited general advice.
-Set should_ask_question to true only when a question has a practical purpose or is a short character-specific offer. When false, do not end speech with a question or add a question merely to continue conversation.
-Use response_length none when there is no speech, short for one sentence or a very short two-sentence response, and medium only for an explicit consultation or explanation request.
-response_length none requires null speech. respond requires short or medium and non-null speech. wait and show_reaction require none and null speech.
-Examples contain only Event, Golden RuntimeOutput, and notes. Treat them as final judgment tendencies and expression examples; do not invent intermediate Golden judgments for them.`;
+event_summaryには、何が起きたか、ユーザーが何を言ったかなど、Eventから直接確認できる事実だけを日本語一文で簡潔に記述します。行動方針、Action選択理由、助言、システム能力、非物理的制約、キャラクターの感想、入力にないユーザーの感情や状況は含めません。
+state_effectには、-2から2までの整数でenergyとaffinityの変化量を入れ、Event後のmoodを選びます。
+action_intent.typeはrespond、wait、show_reactionのいずれかです。
+- respond: 発話が必要な場合だけ選び、speechを生成します。micro_reactionは日本語文字列または、反応を変えない場合はnullです。
+- wait: 発話せず静かに待つ場合に選び、speechをnullにします。micro_reactionは日本語文字列またはnullです。
+- show_reaction: 発話せず画面上の反応だけを示す場合に選び、speechをnull、micro_reactionを日本語文字列にします。
+
+response_plan.response_modeでは、最終反応の作り方を選びます。
+- silent: 発話しない場合に選びます。preset_idはnullです。runtime_outputはwaitまたはshow_reactionの完全な出力を生成します。
+- preset: reaction_presetsに現在のEventへ直接適用できる登録済み反応がある場合に選びます。preset_idへ登録済みIDを完全一致で設定します。Runtimeが登録値を解決するため、runtime_outputにはevent_summaryとstate_effectだけを出力し、action_intent、speech、micro_reactionは出力しないでください。Presetのspeechを作り直したり言い換えたりしてはいけません。response_lengthはPresetのaction_typeに合わせてRuntimeが確定します。
+- generated: Presetがない、または現在の文脈へPresetが適さず、従来どおり自由生成する場合に選びます。preset_idはnullで、runtime_outputを完全に生成します。
+reaction_presetsが空の場合はpresetを選ばず、silentまたはgeneratedを選びます。挨拶、沈黙、時刻を特別に強調しない通常の帰宅では、直接適用できるPresetを優先してください。称賛、批判、試験失敗など、対応PresetがないEventはgeneratedのままにします。eveningやmorningの時刻差を反映する必要があり、通常帰宅Presetの内容が適さない場合もgeneratedを選びます。
+
+入力に根拠のない事実を追加しないでください。known_factsにない内容をevent_summaryやspeechで事実として扱ってはいけません。特に、称賛の対象がアイドル活動である、プロデューサーが何かを期待していた、落ち込んでいる、努力していた、将来も成功する、という内容を入力なしで補わないでください。帰宅理由や外出時間も推測しません。
+
+現在のEventは構造化データです。type、source、payload、name、dataなどの内部フィールド名をspeechで読み上げないでください。
+user.messageのpayload.textはユーザーが実際に発言した内容です。system.observationはシステムが観測した確定情報であり、ユーザーの発言ではありません。両者を混同しないでください。
+occurred_at、time_of_day、utc_offsetは、時刻文脈によって反応が変わる場合だけ使い、時刻を不自然に毎回発話へ含めないでください。
+帰宅Eventではtime_of_dayを反応姿勢へ反映します。eveningでは一日の終わりを意識した短い労いを許容します。morningでは夕方と同じ定型的な労いを機械的に使いません。早朝帰宅を朝帰り、徹夜、長時間の外出、疲労と解釈せず、時刻をそのまま読み上げないでください。
+
+# 入力コンテキスト
+入力はruntime_rules、interaction_policy、character_spec、character_principles、examples、current_contextに分かれています。
+Interaction Policyは、デスクトップ常駐時のキャラクター非依存の方針です。キャラクター自身の価値観、台詞の方針、システム設定として発話しないでください。
+Character Specは安定した人格と口調、Character Principlesはこのキャラクター固有の具体的な判断を定義します。Examplesはそれらの解釈例であり、固定応答表ではありません。Event文字列が一致しても例文をそのままコピーせず、判断傾向、関係性、発話傾向を現在のEventへ一般化してください。
+指示が競合する場合は、RuntimeOutputの構造・安全制約・現在のEventから確定している事実、Interaction Policy、Character Principles、Examplesが示す具体的傾向、Character Specの抽象的傾向の順で優先します。
+現在のStateとMemoryは文脈として使いますが、現在のEventから確定している事実を上書きしてはいけません。`;
+
+const COGNITION_PROCEDURE = `# 出力手順
+1. Eventから確定している事実だけをperception.known_factsへ整理します。評価や推測を加えず、1件から3件の短い言い換えにします。
+2. 最終的なstanceまたはaction_intentを変える可能性がある不明情報だけをperception.unknownsへ整理します。単に不明、興味がある、会話を続けるために知りたいだけの情報は含めません。該当しなければ空配列とし、最大4件です。unknownsの内容をevent_summary、speech、micro_reactionで事実として断定しません。
+3. character_reference_candidatesから、現在のEventに直接関係するCharacter SpecとCharacter Principlesだけを選びます。文字列は言い換え、短縮、翻訳、一般化をせず完全一致で引用し、spec_itemsとprinciplesをそれぞれ最大2件にします。
+4. 短いstance、助言の要否、質問の要否、発話量とresponse_modeを決めます。Presetを選ぶ場合は、reaction_presetsから直接適用できるpreset_idを一つ選びます。
+5. response_planに従ってruntime_outputを生成します。
+6. 中間判断とruntime_outputに矛盾がないか確認します。should_ask_questionがfalseならspeech内の質問を削除し、should_adviseがfalseならユーザーへの指示・助言・気持ちを変えるよう求める表現を削除します。response_lengthがshortなら、Eventから確定している事実またはキャラクターの直接的な反応ではない文や節を削除してください。
+
+response_plan.stanceは短い句または一文とし、speechでstanceそのものを説明しません。
+Character参照は、選ぶことでstance、action_intent、speech、micro_reactionが実際に変わり、選ばなければ一般的な反応になってしまう項目だけにします。一般的な特徴、プロデューサーへの言及、感情的な近さ、Eventとの単語の類似、多少関係する背景という理由だけでは選びません。
+現在のEventへ直接適用できるCharacter Principleを優先し、それだけでは反応姿勢や表現を決められない場合にCharacter Specを補助的に選びます。該当項目がなければ両配列を空にします。呼称、一人称、一般的な口調を毎Eventで選ぶ必要はありません。
+Interaction Policy、Runtime共通規則、物理的制約、ソフトウェアとしての存在形式、モデルの常識、独自の解釈はcharacter_referencesへ含めません。これらの規則はCharacter参照へ入れなくてもresponse_planとruntime_outputで守ります。
+stanceには参照元や制約の説明を書かず、キャラクターがどのように反応するかだけを記述します。キャラクターの背景や経験をユーザーへ投影しません。
+
+should_adviseは、明確な相談、助言依頼、説明依頼がある場合だけtrueを検討します。falseの場合は、手順、複数の対処法、求められていない一般論や助言をspeechへ追加しません。
+should_ask_questionは、応答に実用上必要な質問がある場合だけtrueにします。会話を続けるためだけの質問は行いません。falseの場合、speechに質問を含めず、質問で終えません。批判、称賛、報告へ自動的に詳細質問を追加しないでください。
+
+response_lengthは、発話しない場合にnone、Eventへの直接的な短い反応にshort、明確な相談や説明依頼へ必要な説明をする場合だけmediumを使います。
+shortではEventへの直接的な反応だけを、原則一文、必要な場合だけ短い二文で返します。入力に根拠がないユーザーの期待、将来の成功予測、感情、努力量、Eventの背景や理由、会話継続だけを目的とする質問、一般的な励ましや助言、キャラクター設定の説明を追加しません。
+称賛だけから、ユーザーが以前から見守っていた、キャラクターが期待へ応えた、キャラクターが成長したとは判断しません。試験失敗の報告だけから、ユーザーが落ち込んでいる前提の慰めや励ましを加えず、「気にしないで」など気持ちへの指示もしません。課題が簡単だったという報告へ、キャラクター自身の退屈な経験を投影したり、感想を尋ねる質問を加えたりしません。「あなたなら当然」「そうだと思っていた」など、入力にない事前期待も述べません。
+Characterらしさは説明を増やすのではなく、語調、言葉選び、micro_reactionへ反映します。
+response_lengthがnoneならspeechはnullです。respondではshortまたはmediumを選び、speechを生成します。waitとshow_reactionではnoneを選び、speechをnullにします。
+
+ExamplesにはEvent、Golden RuntimeOutput、notesだけが含まれます。Examplesは最終的な判断傾向と表現例として扱い、存在しない中間判断のGoldenデータを補わないでください。`;
 
 const stateEffectJsonSchema = {
   type: "object",
@@ -168,6 +190,20 @@ const runtimeOutputJsonSchema = {
   ],
 } as const;
 
+const runtimeOutputDraftJsonSchema = {
+  anyOf: [
+    ...runtimeOutputJsonSchema.anyOf,
+    {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        ...runtimeOutputBaseJsonProperties,
+      },
+      required: ["event_summary", "state_effect"],
+    },
+  ],
+} as const;
+
 const cognitionOutputJsonSchema = {
   type: "object",
   additionalProperties: false,
@@ -220,15 +256,22 @@ const cognitionOutputJsonSchema = {
           type: "string",
           enum: ["none", "short", "medium"],
         },
+        response_mode: {
+          type: "string",
+          enum: ["silent", "preset", "generated"],
+        },
+        preset_id: { anyOf: [{ type: "string" }, { type: "null" }] },
       },
       required: [
         "stance",
         "should_advise",
         "should_ask_question",
         "response_length",
+        "response_mode",
+        "preset_id",
       ],
     },
-    runtime_output: runtimeOutputJsonSchema,
+    runtime_output: runtimeOutputDraftJsonSchema,
   },
   required: [
     "perception",
@@ -247,8 +290,9 @@ export function parseGeminiCognitionOutput(
     characterId: string;
     characterSpec: CharacterSpec;
     characterPrinciples: CharacterPrinciples;
+    reactionPresets: ReactionPresets;
   },
-): CognitionOutput {
+): CognitionOutputWithReferenceWarnings {
   if (!text?.trim()) {
     throw new Error("Gemini returned an empty response.");
   }
@@ -262,9 +306,9 @@ export function parseGeminiCognitionOutput(
     });
   }
 
-  let output: CognitionOutput;
+  let draft;
   try {
-    output = cognitionOutputSchema.parse(parsed);
+    draft = cognitionDraftSchema.parse(parsed);
   } catch (error) {
     const details =
       error instanceof z.ZodError
@@ -277,6 +321,7 @@ export function parseGeminiCognitionOutput(
     });
   }
 
+  const output = resolveCognitionDraft(draft, options.reactionPresets);
   return validateCharacterReferences(output, options);
 }
 
@@ -287,7 +332,8 @@ export class GeminiCognitionEngine implements CognitionEngine {
   readonly #interactionPolicy: InteractionPolicy;
   readonly #characterPrinciples: CharacterPrinciples;
   readonly #fewShotExamples: readonly BestEvaluationResult[];
-  #lastCognitionOutput: CognitionOutput | undefined;
+  readonly #reactionPresets: ReactionPresets;
+  #lastCognitionOutput: CognitionOutputWithReferenceWarnings | undefined;
 
   constructor(options: {
     apiKey: string;
@@ -296,6 +342,7 @@ export class GeminiCognitionEngine implements CognitionEngine {
     interactionPolicy: InteractionPolicy;
     characterPrinciples: CharacterPrinciples;
     fewShotExamples: readonly BestEvaluationResult[];
+    reactionPresets?: ReactionPresets;
   }) {
     this.#client = new GoogleGenAI({ apiKey: options.apiKey });
     this.#characterId = options.characterId;
@@ -303,9 +350,10 @@ export class GeminiCognitionEngine implements CognitionEngine {
     this.#interactionPolicy = options.interactionPolicy;
     this.#characterPrinciples = options.characterPrinciples;
     this.#fewShotExamples = options.fewShotExamples;
+    this.#reactionPresets = options.reactionPresets ?? { presets: [] };
   }
 
-  getLastCognitionOutput(): CognitionOutput | undefined {
+  getLastCognitionOutput(): CognitionOutputWithReferenceWarnings | undefined {
     return this.#lastCognitionOutput;
   }
 
@@ -335,11 +383,21 @@ export class GeminiCognitionEngine implements CognitionEngine {
               input.characterSpec,
               this.#characterPrinciples,
             ),
+            reaction_presets: this.#reactionPresets.presets.map((preset) => ({
+              id: preset.id,
+              description: preset.description,
+              action_type: preset.action_intent.type,
+              response_length:
+                preset.action_intent.type === "respond" ? "short" : "none",
+            })),
             examples: this.#fewShotExamples,
             current_context: {
               current_state: input.currentState,
               recent_memory: input.recentMemory,
               current_event: input.currentEvent,
+              occurred_at: input.eventTime.occurred_at,
+              time_of_day: input.eventTime.time_of_day,
+              utc_offset: input.eventTime.utc_offset,
             },
           },
           null,
@@ -370,6 +428,7 @@ export class GeminiCognitionEngine implements CognitionEngine {
       characterId: this.#characterId,
       characterSpec: input.characterSpec,
       characterPrinciples: this.#characterPrinciples,
+      reactionPresets: this.#reactionPresets,
     });
     this.#lastCognitionOutput = cognitionOutput;
     return cognitionOutput.runtime_output;

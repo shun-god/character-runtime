@@ -4,6 +4,7 @@ import { argv, stdin as input, stdout as output } from "node:process";
 import { resolveCharacterId } from "./character-selection.js";
 import { GeminiCognitionEngine } from "./cognition.js";
 import { loadCognitionResources } from "./cognition-context.js";
+import { createUserMessageEvent } from "./event.js";
 import { CharacterRuntime } from "./runtime.js";
 import type { RuntimeOutput } from "./schema.js";
 
@@ -34,6 +35,7 @@ async function main(): Promise<void> {
     interactionPolicy,
     characterPrinciples: characterPackage.principles,
     fewShotExamples,
+    reactionPresets: characterPackage.reactionPresets,
   });
   const runtime = new CharacterRuntime(characterPackage.spec, engine);
   const cli = createInterface({ input, output });
@@ -53,7 +55,7 @@ async function main(): Promise<void> {
       }
 
       try {
-        printResult(await runtime.processEvent(line));
+        printResult(await runtime.processEvent(createUserMessageEvent(line)));
         console.log("current_state:");
         console.log(JSON.stringify(runtime.getState(), null, 2));
         console.log();

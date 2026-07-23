@@ -1,4 +1,5 @@
 import type { CognitionEngine } from "./cognition.js";
+import { getEventTimeContext, runtimeEventSchema, type RuntimeEvent } from "./event.js";
 import { RecentMemory } from "./memory.js";
 import type { CharacterSpec, RuntimeOutput } from "./schema.js";
 import {
@@ -20,22 +21,21 @@ export class CharacterRuntime {
     this.#memory = new RecentMemory(options.memoryLimit ?? 5);
   }
 
-  async processEvent(event: string): Promise<RuntimeOutput> {
-    const normalizedEvent = event.trim();
-    if (!normalizedEvent) {
-      throw new Error("Event must not be empty.");
-    }
+  async processEvent(event: RuntimeEvent): Promise<RuntimeOutput> {
+    const parsedEvent = runtimeEventSchema.parse(event);
+    const eventTime = getEventTimeContext(parsedEvent);
 
     const output = await this.cognitionEngine.process({
       characterSpec: this.characterSpec,
       currentState: this.getState(),
       recentMemory: this.#memory.getAll(),
-      currentEvent: normalizedEvent,
+      currentEvent: parsedEvent,
+      eventTime,
     });
 
     this.#state = applyStateEffect(this.#state, output.state_effect);
     this.#memory.add({
-      event: normalizedEvent,
+      event: parsedEvent,
       output,
       state_after: this.getState(),
     });

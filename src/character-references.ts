@@ -9,13 +9,15 @@ export type CharacterReferenceCandidates = {
   principles: string[];
 };
 
+export type CognitionOutputWithReferenceWarnings = CognitionOutput & {
+  reference_warnings: string[];
+};
+
 export function extractCharacterSpecReferenceCandidates(
   spec: CharacterSpec,
 ): string[] {
   return [
     spec.identity.role,
-    spec.identity.first_person,
-    spec.identity.user_address,
     ...spec.personality,
     ...spec.values,
     spec.relationship.user_role,
@@ -45,7 +47,7 @@ export function validateCharacterReferences(
     characterSpec: CharacterSpec;
     characterPrinciples: CharacterPrinciples;
   },
-): CognitionOutput {
+): CognitionOutputWithReferenceWarnings {
   const candidates = createCharacterReferenceCandidates(
     options.characterSpec,
     options.characterPrinciples,
@@ -53,20 +55,33 @@ export function validateCharacterReferences(
   const specItems = new Set(candidates.spec_items);
   const principles = new Set(candidates.principles);
 
-  for (const reference of output.character_references.spec_items) {
-    if (!specItems.has(reference)) {
-      throw new Error(
-        `Character "${options.characterId}" returned an unknown Character Spec reference: ${reference}`,
-      );
-    }
-  }
-  for (const reference of output.character_references.principles) {
-    if (!principles.has(reference)) {
-      throw new Error(
-        `Character "${options.characterId}" returned an unknown Character Principle reference: ${reference}`,
-      );
-    }
-  }
+  const validSpecItems = output.character_references.spec_items.filter((reference) =>
+    specItems.has(reference),
+  );
+  const validPrinciples = output.character_references.principles.filter(
+    (reference) => principles.has(reference),
+  );
+  const referenceWarnings = [
+    ...output.character_references.spec_items
+      .filter((reference) => !specItems.has(reference))
+      .map(
+        (reference) =>
+          `Character "${options.characterId}" returned an unknown Character Spec reference: ${reference}`,
+      ),
+    ...output.character_references.principles
+      .filter((reference) => !principles.has(reference))
+      .map(
+        (reference) =>
+          `Character "${options.characterId}" returned an unknown Character Principle reference: ${reference}`,
+      ),
+  ];
 
-  return output;
+  return {
+    ...output,
+    character_references: {
+      spec_items: validSpecItems,
+      principles: validPrinciples,
+    },
+    reference_warnings: referenceWarnings,
+  };
 }

@@ -1,0 +1,25 @@
+{
+  "presets": [
+    {
+      "id": "greeting.default",
+      "description": "日常的な短い挨拶へ返す標準反応",
+      "action_intent": { "type": "respond" },
+      "speech": "こんにちは、プロデューサー。",
+      "micro_reaction": "軽く会釈をして、穏やかに微笑む"
+    },
+    {
+      "id": "silence.wait",
+      "description": "ユーザーがしばらく沈黙しているとき、発話せず静かに待つ標準反応",
+      "action_intent": { "type": "wait" },
+      "speech": null,
+      "micro_reaction": "落ち着いた表情で静かに待つ"
+    },
+    {
+      "id": "return_home.default",
+      "description": "特別な時刻文脈を強調しない通常の帰宅を迎える標準反応",
+      "action_intent": { "type": "respond" },
+      "speech": "おかえり、プロデューサー。",
+      "micro_reaction": "穏やかな笑みを浮かべて視線を向ける"
+    }
+  ]
+}

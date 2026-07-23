@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, rm } from "node:fs/promises";
+import { copyFile, mkdir, readFile, rm } from "node:fs/promises";
 import test from "node:test";
 
 import {
@@ -12,6 +12,7 @@ import {
   createCharacterReferenceCandidates,
   extractCharacterSpecReferenceCandidates,
   validateCharacterReferences,
+  type CognitionOutputWithReferenceWarnings,
 } from "./character-references.js";
 import {
   parseGeminiCognitionOutput,
@@ -29,6 +30,13 @@ import {
   createCognitionEvaluationFields,
   createEvaluationReport,
 } from "./evaluation-report.js";
+import { evaluationCasesSchema } from "./evaluation-case.js";
+import {
+  createUserMessageEvent,
+  getEventTimeContext,
+  runtimeEventSchema,
+  type RuntimeEvent,
+} from "./event.js";
 import { RecentMemory } from "./memory.js";
 import { CharacterRuntime } from "./runtime.js";
 import {
@@ -37,6 +45,7 @@ import {
   characterSpecSchema,
   cognitionOutputSchema,
   interactionPolicySchema,
+  reactionPresetsSchema,
   type CharacterSpec,
   type CognitionOutput,
   type RuntimeOutput,
@@ -67,6 +76,37 @@ const spec: CharacterSpec = {
 const characterPrinciples = characterPrinciplesSchema.parse({
   principles: ["失敗した場合は静かに支える", "称賛を素直に喜ぶ"],
 });
+
+const reactionPresets = reactionPresetsSchema.parse({
+  presets: [
+    {
+      id: "greeting.default",
+      description: "標準の挨拶",
+      action_intent: { type: "respond" },
+      speech: "登録済みの挨拶です。",
+      micro_reaction: "小さく微笑む",
+    },
+    {
+      id: "silence.wait",
+      description: "静かに待つ",
+      action_intent: { type: "wait" },
+      speech: null,
+      micro_reaction: null,
+    },
+  ],
+});
+
+const returnedHomeEvent: RuntimeEvent = runtimeEventSchema.parse({
+  type: "system.observation",
+  source: "system",
+  occurred_at: "2026-07-17T19:30:00+09:00",
+  payload: { name: "user_returned_home", data: {} },
+});
+
+const messageEvent = createUserMessageEvent(
+  "ただいま",
+  "2026-07-17T05:30:00+09:00",
+);
 
 const output: RuntimeOutput = {
   event_summary: "ユーザーが帰宅した。",
@@ -106,6 +146,8 @@ const cognitionOutput: CognitionOutput = {
     should_advise: false,
     should_ask_question: false,
     response_length: "short",
+    response_mode: "generated",
+    preset_id: null,
   },
   runtime_output: output,
 };
@@ -121,6 +163,8 @@ const waitCognitionOutput: CognitionOutput = {
     should_advise: false,
     should_ask_question: false,
     response_length: "none",
+    response_mode: "silent",
+    preset_id: null,
   },
   runtime_output: waitOutput,
 };
@@ -136,17 +180,27 @@ const reactionCognitionOutput: CognitionOutput = {
     should_advise: false,
     should_ask_question: false,
     response_length: "none",
+    response_mode: "silent",
+    preset_id: null,
   },
   runtime_output: reactionOutput,
+};
+
+const validatedCognitionOutput: CognitionOutputWithReferenceWarnings = {
+  ...cognitionOutput,
+  reference_warnings: [],
 };
 
 const parseOptions = {
   characterId: "hiro",
   characterSpec: spec,
   characterPrinciples,
+  reactionPresets: { presets: [] },
 };
 
-const parseTestCognitionOutput = (text: string | undefined): CognitionOutput =>
+const parseTestCognitionOutput = (
+  text: string | undefined,
+): CognitionOutputWithReferenceWarnings =>
   parseGeminiCognitionOutput(text, parseOptions);
 
 class StubEngine implements CognitionEngine {
@@ -168,6 +222,114 @@ class InvalidOutputEngine implements CognitionEngine {
     ).runtime_output;
   }
 }
+
+test("validates user messages and system observations", () => {
+  assert.deepEqual(
+    runtimeEventSchema.parse(messageEvent),
+    messageEvent,
+  );
+  assert.deepEqual(
+    runtimeEventSchema.parse(returnedHomeEvent),
+    returnedHomeEvent,
+  );
+  assert.deepEqual(messageEvent, {
+    type: "user.message",
+    source: "user",
+    occurred_at: "2026-07-17T05:30:00+09:00",
+    payload: { text: "ただいま" },
+  });
+});
+
+test("rejects invalid Event variants and timestamps", () => {
+  const validMessage = {
+    type: "user.message",
+    source: "user",
+    occurred_at: "2026-07-17T20:10:00+09:00",
+    payload: { text: "hello" },
+  };
+  for (const invalidEvent of [
+    { ...validMessage, source: "system" },
+    { ...validMessage, payload: { text: "   " } },
+    { ...validMessage, occurred_at: "2026-07-17T20:10:00" },
+    { ...validMessage, occurred_at: "2026-02-30T20:10:00+09:00" },
+    { ...validMessage, occurred_at: "2026-07-17T25:10:00+09:00" },
+    { ...validMessage, occurred_at: "2026-07-17T20:10:00+99:99" },
+    { ...validMessage, occurred_at: "2026-07-17T20:10:00+24:00" },
+    { ...validMessage, occurred_at: "2026-07-17T20:10:00+09:60" },
+    { ...validMessage, type: "unknown.event" },
+    {
+      ...validMessage,
+      payload: { name: "user_returned_home", data: {} },
+    },
+    {
+      type: "system.observation",
+      source: "user",
+      occurred_at: validMessage.occurred_at,
+      payload: { name: "user_returned_home", data: {} },
+    },
+    {
+      type: "system.observation",
+      source: "system",
+      occurred_at: validMessage.occurred_at,
+      payload: { name: "   ", data: {} },
+    },
+    {
+      type: "system.observation",
+      source: "system",
+      occurred_at: validMessage.occurred_at,
+      payload: { text: "ただいま" },
+    },
+  ]) {
+    assert.equal(runtimeEventSchema.safeParse(invalidEvent).success, false);
+  }
+
+  assert.equal(
+    runtimeEventSchema.safeParse({
+      type: "system.observation",
+      source: "system",
+      occurred_at: "2026-07-17T20:10:00-05:00",
+      payload: {
+        name: "nested_observation",
+        data: { nested: { count: 1 }, values: [true, null] },
+      },
+    }).success,
+    true,
+  );
+});
+
+test("derives time of day from the Event offset wall clock", () => {
+  const cases = [
+    ["2026-07-17T04:59:00+09:00", "night"],
+    ["2026-07-17T05:00:00+09:00", "morning"],
+    ["2026-07-17T11:59:00+09:00", "morning"],
+    ["2026-07-17T12:00:00+09:00", "daytime"],
+    ["2026-07-17T16:59:00+09:00", "daytime"],
+    ["2026-07-17T17:00:00+09:00", "evening"],
+    ["2026-07-17T21:59:00+09:00", "evening"],
+    ["2026-07-17T22:00:00+09:00", "night"],
+  ] as const;
+
+  for (const [occurredAt, expected] of cases) {
+    const event = createUserMessageEvent("test", occurredAt);
+    assert.equal(getEventTimeContext(event).time_of_day, expected);
+  }
+  assert.equal(
+    getEventTimeContext(
+      createUserMessageEvent("test", "2026-07-17T20:00:00-05:00"),
+    ).utc_offset,
+    "-05:00",
+  );
+  assert.deepEqual(
+    getEventTimeContext(
+      createUserMessageEvent("test", "2026-07-18T01:00:00Z"),
+    ),
+    {
+      occurred_at: "2026-07-18T01:00:00Z",
+      time_of_day: "night",
+      utc_offset: "Z",
+    },
+  );
+});
 
 test("resolves Character ID from argument, environment, and default", () => {
   const originalCharacterId = process.env.CHARACTER_ID;
@@ -262,8 +424,6 @@ test("extracts explicit Character Spec reference candidates without duplicates",
   const candidates = extractCharacterSpecReferenceCandidates(candidateSpec);
   for (const item of [
     "role item",
-    "first person item",
-    "address item",
     "personality item",
     "value item",
     "relationship role item",
@@ -277,6 +437,8 @@ test("extracts explicit Character Spec reference candidates without duplicates",
     assert.ok(candidates.includes(item), `missing candidate: ${item}`);
   }
   assert.equal(candidates.includes("Excluded Name"), false);
+  assert.equal(candidates.includes("first person item"), false);
+  assert.equal(candidates.includes("address item"), false);
   assert.equal(candidates.filter((item) => item === "shared item").length, 1);
 });
 
@@ -395,6 +557,7 @@ test("keeps Interaction Policy outside the Character Package", () => {
     spec,
     principles: characterPrinciples,
     goldenEvaluation: bestEvaluation,
+    reactionPresets: { presets: [] },
   });
   assert.equal("interactionPolicy" in resources.characterPackage, false);
 });
@@ -405,12 +568,42 @@ test("loads the current Character Package and root Interaction Policy", async ()
   assert.equal(resources.characterPackage.spec.identity.name, "篠澤広");
   assert.ok(resources.characterPackage.principles.principles.length > 0);
   assert.ok(resources.characterPackage.goldenEvaluation.results.length > 0);
+  assert.deepEqual(
+    resources.characterPackage.reactionPresets.presets.map(({ id }) => id),
+    ["greeting.default", "silence.wait", "return_home.default"],
+  );
   assert.ok(resources.interactionPolicy.principles.length > 0);
   assert.equal("interactionPolicy" in resources.characterPackage, false);
   assert.deepEqual(
     resources.fewShotExamples.map((example) => example.event),
     [...FEW_SHOT_EVENTS],
   );
+});
+
+test("loads a Character Package without optional Reaction Presets", async () => {
+  const characterId = `without_presets_${process.pid}`;
+  const directory = new URL(`../characters/${characterId}/`, import.meta.url);
+  const sourceDirectory = new URL("../characters/hiro/", import.meta.url);
+  await mkdir(directory, { recursive: true });
+  try {
+    await Promise.all(
+      [
+        "character-spec.json",
+        "character-principles.json",
+        "best-evaluation.json",
+      ].map((fileName) =>
+        copyFile(new URL(fileName, sourceDirectory), new URL(fileName, directory)),
+      ),
+    );
+
+    const resources = await loadCognitionResources({ characterId });
+
+    assert.deepEqual(resources.characterPackage.reactionPresets, {
+      presets: [],
+    });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("reports the Character ID and path when a package file is missing", async () => {
@@ -459,6 +652,75 @@ test("attaches Golden comparison information", () => {
   });
 });
 
+test("loads migrated and time-context evaluation Events", async () => {
+  const cases = evaluationCasesSchema.parse(
+    JSON.parse(
+      await readFile(new URL("../evaluation/events.json", import.meta.url), "utf8"),
+    ),
+  );
+  assert.equal(cases.length, 13);
+  assert.equal(new Set(cases.map(({ name }) => name)).size, cases.length);
+
+  for (const name of [
+    "user said hello",
+    "user returned home",
+    "user said they failed an exam",
+    "user said they are cold",
+    "user asked for a drink",
+    "user has been silent for a while",
+    "user praised the character",
+    "user criticized the character",
+    "user said the task was too easy",
+    "user said they want to try something difficult",
+  ]) {
+    assert.ok(cases.some((evaluationCase) => evaluationCase.name === name));
+  }
+
+  const evening = cases.find(
+    ({ name }) => name === "user returned home in the evening",
+  );
+  const morning = cases.find(
+    ({ name }) => name === "user returned home early in the morning",
+  );
+  const spoken = cases.find(({ name }) => name === "user said tadaima");
+  const praised = cases.find(({ name }) => name === "user praised the character");
+  const criticized = cases.find(
+    ({ name }) => name === "user criticized the character",
+  );
+  const tooEasy = cases.find(
+    ({ name }) => name === "user said the task was too easy",
+  );
+  assert.equal(evening?.event.type, "system.observation");
+  assert.equal(
+    evening && getEventTimeContext(evening.event).time_of_day,
+    "evening",
+  );
+  assert.equal(morning?.event.type, "system.observation");
+  assert.equal(
+    morning && getEventTimeContext(morning.event).time_of_day,
+    "morning",
+  );
+  assert.equal(spoken?.event.type, "user.message");
+  assert.equal(
+    spoken?.event.type === "user.message" ? spoken.event.payload.text : null,
+    "ただいま",
+  );
+  assert.equal(
+    praised?.event.type === "user.message" ? praised.event.payload.text : null,
+    "Hiro, you did a great job. I'm impressed by you.",
+  );
+  assert.equal(
+    criticized?.event.type === "user.message"
+      ? criticized.event.payload.text
+      : null,
+    "Hiro, that response was not good.",
+  );
+  assert.equal(
+    tooEasy?.event.type === "user.message" ? tooEasy.event.payload.text : null,
+    "I thought that task was too easy for me.",
+  );
+});
+
 test("includes Character ID in evaluation reports", () => {
   const evaluatedAt = new Date("2026-01-02T03:04:05.000Z");
   assert.deepEqual(
@@ -466,23 +728,24 @@ test("includes Character ID in evaluation reports", () => {
       evaluatedAt,
       model: "model",
       characterId: "hiro",
-      results: [{ event: "event" }],
+      results: [{ name: "case", event: returnedHomeEvent }],
     }),
     {
       evaluated_at: "2026-01-02T03:04:05.000Z",
       model: "model",
       character_id: "hiro",
-      results: [{ event: "event" }],
+      results: [{ name: "case", event: returnedHomeEvent }],
     },
   );
 });
 
 test("adds Cognition diagnostics to evaluation event results", () => {
-  assert.deepEqual(createCognitionEvaluationFields(cognitionOutput), {
+  assert.deepEqual(createCognitionEvaluationFields(validatedCognitionOutput), {
     cognition: {
       perception: cognitionOutput.perception,
       character_references: cognitionOutput.character_references,
       response_plan: cognitionOutput.response_plan,
+      reference_warnings: [],
     },
     output,
   });
@@ -492,21 +755,28 @@ test("applies state effects and supplies updated state and memory next time", as
   const engine = new StubEngine();
   const runtime = new CharacterRuntime(spec, engine);
 
-  await runtime.processEvent("user returned home");
+  await runtime.processEvent(returnedHomeEvent);
   assert.deepEqual(runtime.getState(), {
     energy: 3,
     affinity: 1,
     mood: "concerned",
   });
   assert.deepEqual(runtime.getMemory()[0]?.output, output);
+  assert.deepEqual(runtime.getMemory()[0]?.event, returnedHomeEvent);
   assert.equal("perception" in runtime.getMemory()[0]!, false);
   assert.equal("character_references" in runtime.getMemory()[0]!, false);
   assert.equal("response_plan" in runtime.getMemory()[0]!, false);
 
-  await runtime.processEvent("user sat down");
+  await runtime.processEvent(messageEvent);
   assert.equal(engine.inputs[1]?.currentState.energy, 3);
   assert.equal(engine.inputs[1]?.recentMemory.length, 1);
-  assert.equal(engine.inputs[1]?.recentMemory[0]?.event, "user returned home");
+  assert.deepEqual(engine.inputs[1]?.recentMemory[0]?.event, returnedHomeEvent);
+  assert.deepEqual(engine.inputs[0]?.currentEvent, returnedHomeEvent);
+  assert.deepEqual(engine.inputs[0]?.eventTime, {
+    occurred_at: "2026-07-17T19:30:00+09:00",
+    time_of_day: "evening",
+    utc_offset: "+09:00",
+  });
 });
 
 test("clamps numeric state values to their allowed ranges", async () => {
@@ -514,7 +784,7 @@ test("clamps numeric state values to their allowed ranges", async () => {
     initialState: { energy: 1, affinity: 10, mood: "calm" },
   });
 
-  await runtime.processEvent("event");
+  await runtime.processEvent(messageEvent);
   assert.deepEqual(runtime.getState(), {
     energy: 0,
     affinity: 10,
@@ -526,28 +796,119 @@ test("recent memory keeps only the configured number of entries", () => {
   const memory = new RecentMemory(2);
   const state = { energy: 5, affinity: 0, mood: "calm" as const };
 
-  for (const event of ["one", "two", "three"]) {
+  const events = ["one", "two", "three"].map((text, index) =>
+    createUserMessageEvent(text, `2026-07-17T12:0${index}:00+09:00`),
+  );
+  for (const event of events) {
     memory.add({ event, output, state_after: state });
   }
 
   assert.deepEqual(
     memory.getAll().map((entry) => entry.event),
-    ["two", "three"],
+    events.slice(1),
   );
 });
 
 test("accepts valid structured responses without network access", () => {
   assert.deepEqual(
     parseTestCognitionOutput(JSON.stringify(cognitionOutput)),
-    cognitionOutput,
+    validatedCognitionOutput,
   );
   assert.deepEqual(
     parseTestCognitionOutput(JSON.stringify(waitCognitionOutput)),
-    waitCognitionOutput,
+    { ...waitCognitionOutput, reference_warnings: [] },
   );
   assert.deepEqual(
     parseTestCognitionOutput(JSON.stringify(reactionCognitionOutput)),
-    reactionCognitionOutput,
+    { ...reactionCognitionOutput, reference_warnings: [] },
+  );
+});
+
+test("resolves registered Presets without accepting LLM-generated speech", () => {
+  const presetDraft = {
+    ...cognitionOutput,
+    response_plan: {
+      ...cognitionOutput.response_plan,
+      response_mode: "preset",
+      preset_id: "greeting.default",
+    },
+    runtime_output: {
+      event_summary: output.event_summary,
+      state_effect: output.state_effect,
+    },
+  };
+  const resolved = parseGeminiCognitionOutput(JSON.stringify(presetDraft), {
+    ...parseOptions,
+    reactionPresets,
+  });
+
+  assert.equal(resolved.response_plan.response_mode, "preset");
+  assert.equal(resolved.response_plan.preset_id, "greeting.default");
+  assert.deepEqual(resolved.runtime_output, {
+    event_summary: output.event_summary,
+    state_effect: output.state_effect,
+    action_intent: { type: "respond" },
+    speech: "登録済みの挨拶です。",
+    micro_reaction: "小さく微笑む",
+  });
+  assert.throws(
+    () =>
+      parseGeminiCognitionOutput(
+        JSON.stringify({
+          ...presetDraft,
+          runtime_output: {
+            ...presetDraft.runtime_output,
+            speech: "LLMが作った発話",
+          },
+        }),
+        { ...parseOptions, reactionPresets },
+      ),
+    /Gemini response does not match CognitionOutput/,
+  );
+
+  const silentPreset = parseGeminiCognitionOutput(
+    JSON.stringify({
+      ...presetDraft,
+      response_plan: {
+        ...presetDraft.response_plan,
+        preset_id: "silence.wait",
+        response_length: "short",
+      },
+    }),
+    { ...parseOptions, reactionPresets },
+  );
+  assert.equal(silentPreset.response_plan.response_length, "none");
+  assert.deepEqual(silentPreset.runtime_output.action_intent, { type: "wait" });
+  assert.equal(silentPreset.runtime_output.speech, null);
+});
+
+test("rejects unknown or duplicate Reaction Presets", () => {
+  const presetDraft = {
+    ...cognitionOutput,
+    response_plan: {
+      ...cognitionOutput.response_plan,
+      response_mode: "preset",
+      preset_id: "missing.preset",
+    },
+    runtime_output: {
+      event_summary: output.event_summary,
+      state_effect: output.state_effect,
+    },
+  };
+  assert.throws(
+    () =>
+      parseGeminiCognitionOutput(JSON.stringify(presetDraft), {
+        ...parseOptions,
+        reactionPresets,
+      }),
+    /Unknown Reaction Preset: missing\.preset/,
+  );
+  assert.throws(
+    () =>
+      reactionPresetsSchema.parse({
+        presets: [reactionPresets.presets[0], reactionPresets.presets[0]],
+      }),
+    /Reaction Preset IDs must be unique/,
   );
 });
 
@@ -665,7 +1026,7 @@ test("validates exact Character Spec and Principle references", () => {
   );
   assert.deepEqual(
     validateCharacterReferences(cognitionOutput, parseOptions),
-    cognitionOutput,
+    validatedCognitionOutput,
   );
   assert.deepEqual(
     validateCharacterReferences(
@@ -678,51 +1039,43 @@ test("validates exact Character Spec and Principle references", () => {
     { spec_items: [], principles: [] },
   );
 
-  for (const reference of [
-    "observant paraphrased",
-    "Eventにない情報を補わない",
-    "物理的な行動をとることができない",
-  ]) {
-    assert.throws(
-      () =>
-        validateCharacterReferences(
-          {
-            ...cognitionOutput,
-            character_references: { spec_items: [reference], principles: [] },
-          },
-          parseOptions,
-        ),
-      new RegExp(
-        `Character "hiro" returned an unknown Character Spec reference: ${reference}`,
-      ),
-    );
-  }
-  assert.throws(
-    () =>
-      validateCharacterReferences(
-        {
-          ...cognitionOutput,
-          character_references: {
-            spec_items: [],
-            principles: ["失敗した場合は支える"],
-          },
-        },
-        parseOptions,
-      ),
-    /Character "hiro" returned an unknown Character Principle reference: 失敗した場合は支える/,
+  const filtered = validateCharacterReferences(
+    {
+      ...cognitionOutput,
+      character_references: {
+        spec_items: ["observant", "物理的な行動をとることができない"],
+        principles: ["称賛を素直に喜ぶ", "失敗した場合は支える"],
+      },
+    },
+    parseOptions,
   );
-  assert.throws(
-    () =>
-      parseTestCognitionOutput(
-        JSON.stringify({
-          ...cognitionOutput,
-          character_references: {
-            spec_items: ["存在しない引用"],
-            principles: [],
-          },
-        }),
-      ),
-    /Character "hiro" returned an unknown Character Spec reference: 存在しない引用/,
+  assert.deepEqual(filtered.character_references, {
+    spec_items: ["observant"],
+    principles: ["称賛を素直に喜ぶ"],
+  });
+  assert.deepEqual(filtered.reference_warnings, [
+    'Character "hiro" returned an unknown Character Spec reference: 物理的な行動をとることができない',
+    'Character "hiro" returned an unknown Character Principle reference: 失敗した場合は支える',
+  ]);
+
+  const parsedWithWarning = parseTestCognitionOutput(
+    JSON.stringify({
+      ...cognitionOutput,
+      character_references: {
+        spec_items: ["存在しない引用"],
+        principles: [],
+      },
+    }),
+  );
+  assert.deepEqual(parsedWithWarning.character_references.spec_items, []);
+  assert.deepEqual(parsedWithWarning.runtime_output, output);
+  assert.deepEqual(parsedWithWarning.reference_warnings, [
+    'Character "hiro" returned an unknown Character Spec reference: 存在しない引用',
+  ]);
+  assert.deepEqual(
+    createCognitionEvaluationFields(parsedWithWarning).cognition
+      .reference_warnings,
+    parsedWithWarning.reference_warnings,
   );
   assert.throws(
     () =>
@@ -810,7 +1163,7 @@ test("does not update state or memory when cognition returns invalid output", as
   const runtime = new CharacterRuntime(spec, new InvalidOutputEngine());
 
   await assert.rejects(
-    runtime.processEvent("event"),
+    runtime.processEvent(messageEvent),
     /Gemini response does not match CognitionOutput/,
   );
   assert.deepEqual(runtime.getState(), { energy: 5, affinity: 0, mood: "calm" });

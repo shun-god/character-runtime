@@ -12,11 +12,13 @@ import {
   characterPrinciplesSchema,
   characterSpecSchema,
   interactionPolicySchema,
+  reactionPresetsSchema,
   type BestEvaluation,
   type BestEvaluationResult,
   type CharacterPrinciples,
   type CharacterSpec,
   type InteractionPolicy,
+  type ReactionPresets,
 } from "./schema.js";
 
 export const FEW_SHOT_EVENTS = [
@@ -31,6 +33,7 @@ export type CharacterPackage = {
   spec: CharacterSpec;
   principles: CharacterPrinciples;
   goldenEvaluation: BestEvaluation;
+  reactionPresets: ReactionPresets;
 };
 
 export type CognitionResources = {
@@ -89,6 +92,26 @@ async function readCharacterPackageJson(
   }
 }
 
+async function readOptionalCharacterPackageJson(
+  location: CharacterPackageLocation,
+  relativePath: string,
+): Promise<unknown | undefined> {
+  try {
+    return await readJson(new URL(`../${relativePath}`, import.meta.url));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return undefined;
+    }
+    if (error instanceof SyntaxError) {
+      throw new Error(
+        `Character package "${location.id}" has invalid JSON in ${relativePath}: ${error.message}`,
+        { cause: error },
+      );
+    }
+    throw error;
+  }
+}
+
 function parseCharacterPackageFile<T extends z.ZodTypeAny>(
   schema: T,
   value: unknown,
@@ -122,6 +145,7 @@ export function createCognitionResources(
   characterSpec: CharacterSpec,
   characterPrinciples: CharacterPrinciples,
   bestEvaluation: BestEvaluation,
+  reactionPresets: ReactionPresets = { presets: [] },
 ): CognitionResources {
   return {
     interactionPolicy,
@@ -129,6 +153,7 @@ export function createCognitionResources(
       spec: characterSpec,
       principles: characterPrinciples,
       goldenEvaluation: bestEvaluation,
+      reactionPresets,
     },
     fewShotExamples: selectFewShotExamples(bestEvaluation),
   };
@@ -144,6 +169,7 @@ export async function loadCognitionResources(
     characterSpecJson,
     characterPrinciplesJson,
     bestEvaluationJson,
+    reactionPresetsJson,
   ] = await Promise.all([
       readJson(new URL("../interaction-policy.json", import.meta.url)),
       readCharacterPackageJson(characterLocation, characterLocation.specPath),
@@ -154,6 +180,10 @@ export async function loadCognitionResources(
       readCharacterPackageJson(
         characterLocation,
         characterLocation.goldenEvaluationPath,
+      ),
+      readOptionalCharacterPackageJson(
+        characterLocation,
+        `${characterLocation.directory}/reaction-presets.json`,
       ),
     ]);
 
@@ -176,6 +206,12 @@ export async function loadCognitionResources(
     characterLocation,
     characterLocation.goldenEvaluationPath,
   );
+  const reactionPresets = parseCharacterPackageFile(
+    reactionPresetsSchema,
+    reactionPresetsJson ?? { presets: [] },
+    characterLocation,
+    `${characterLocation.directory}/reaction-presets.json`,
+  );
 
   try {
     return createCognitionResources(
@@ -183,6 +219,7 @@ export async function loadCognitionResources(
       characterSpec,
       characterPrinciples,
       bestEvaluation,
+      reactionPresets,
     );
   } catch (error) {
     throw new Error(

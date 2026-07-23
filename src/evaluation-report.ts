@@ -1,18 +1,19 @@
-import type { CognitionOutput } from "./schema.js";
+import type { CognitionOutputWithReferenceWarnings } from "./character-references.js";
 
 export type CognitionDiagnostics = Pick<
-  CognitionOutput,
-  "perception" | "character_references" | "response_plan"
+  CognitionOutputWithReferenceWarnings,
+  "perception" | "character_references" | "response_plan" | "reference_warnings"
 >;
 
 export function createCognitionEvaluationFields(
-  cognitionOutput: CognitionOutput,
+  cognitionOutput: CognitionOutputWithReferenceWarnings,
 ) {
   return {
     cognition: {
       perception: cognitionOutput.perception,
       character_references: cognitionOutput.character_references,
       response_plan: cognitionOutput.response_plan,
+      reference_warnings: cognitionOutput.reference_warnings,
     },
     output: cognitionOutput.runtime_output,
   };

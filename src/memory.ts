@@ -1,8 +1,9 @@
 import type { CharacterState } from "./state.js";
 import type { RuntimeOutput } from "./schema.js";
+import type { RuntimeEvent } from "./event.js";
 
 export type MemoryEntry = {
-  event: string;
+  event: RuntimeEvent;
   output: RuntimeOutput;
   state_after: CharacterState;
 };

@@ -1,11 +1,11 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
-import { z } from "zod";
-
 import { resolveCharacterId } from "../src/character-selection.js";
 import { GeminiCognitionEngine } from "../src/cognition.js";
 import { loadCognitionResources } from "../src/cognition-context.js";
+import { evaluationCasesSchema } from "../src/evaluation-case.js";
+import type { RuntimeEvent } from "../src/event.js";
 import {
   createCognitionEvaluationFields,
   createEvaluationReport,
@@ -20,17 +20,18 @@ import type { RuntimeOutput } from "../src/schema.js";
 import type { CharacterState } from "../src/state.js";
 
 const DEFAULT_MODEL = "gemini-3.1-flash-lite";
-const eventsSchema = z.array(z.string().trim().min(1));
 
 type EvaluationSuccess = {
-  event: string;
+  name: string;
+  event: RuntimeEvent;
   cognition: CognitionDiagnostics;
   output: RuntimeOutput;
   state_after: CharacterState;
 } & GoldenReference;
 
 type EvaluationFailure = {
-  event: string;
+  name: string;
+  event: RuntimeEvent;
   cognition: null;
   error: string;
 } & GoldenReference;
@@ -52,12 +53,12 @@ async function main(): Promise<void> {
     fewShotExamples,
   } = await loadCognitionResources({ characterId });
   const bestEvaluation = characterPackage.goldenEvaluation;
-  const events = eventsSchema.parse(
+  const events = evaluationCasesSchema.parse(
     JSON.parse(
       await readFile(new URL("../evaluation/events.json", import.meta.url), "utf8"),
     ),
   );
-  const eventSet = new Set(events);
+  const eventSet = new Set(events.map(({ name }) => name));
   const missingGoldenEvents = bestEvaluation.results
     .map((result) => result.event)
     .filter((event) => !eventSet.has(event));
@@ -69,8 +70,9 @@ async function main(): Promise<void> {
 
   const results: Array<EvaluationSuccess | EvaluationFailure> = [];
 
-  for (const event of events) {
-    const golden = bestEvaluation.results.find((result) => result.event === event);
+  for (const evaluationCase of events) {
+    const { name, event } = evaluationCase;
+    const golden = bestEvaluation.results.find((result) => result.event === name);
     const cognitionEngine = new GeminiCognitionEngine({
       apiKey,
       characterId,
@@ -78,6 +80,7 @@ async function main(): Promise<void> {
       interactionPolicy,
       characterPrinciples: characterPackage.principles,
       fewShotExamples,
+      reactionPresets: characterPackage.reactionPresets,
     });
     const runtime = new CharacterRuntime(
       characterPackage.spec,
@@ -92,21 +95,23 @@ async function main(): Promise<void> {
       }
       const cognitionFields = createCognitionEvaluationFields(cognitionOutput);
       results.push({
+        name,
         event,
         ...cognitionFields,
         state_after: runtime.getState(),
         ...createGoldenReference(output, golden),
       });
-      console.log(`Evaluated: ${event}`);
+      console.log(`Evaluated: ${name}`);
     } catch (error) {
       const message = errorMessage(error).replaceAll(apiKey, "[REDACTED]");
       results.push({
+        name,
         event,
         cognition: null,
         error: message,
         ...createGoldenReference(null, golden),
       });
-      console.error(`Failed: ${event}: ${message}`);
+      console.error(`Failed: ${name}: ${message}`);
     }
   }
 

@@ -32,7 +32,7 @@ export const characterSpecSchema = z.object({
 
 const nonEmptyStringSchema = z.string().trim().min(1);
 
-const stateEffectSchema = z.object({
+export const stateEffectSchema = z.object({
   energy: z.number().int().min(-2).max(2),
   affinity: z.number().int().min(-2).max(2),
   mood: moodSchema,
@@ -64,6 +64,41 @@ export const runtimeOutputSchema = z.union([
   }),
 ]);
 
+const reactionPresetFields = {
+  id: nonEmptyStringSchema,
+  description: nonEmptyStringSchema,
+};
+
+export const reactionPresetSchema = z.union([
+  z.object({
+    ...reactionPresetFields,
+    action_intent: z.object({ type: z.literal("respond") }),
+    speech: nonEmptyStringSchema,
+    micro_reaction: nonEmptyStringSchema.nullable(),
+  }),
+  z.object({
+    ...reactionPresetFields,
+    action_intent: z.object({ type: z.literal("wait") }),
+    speech: z.null(),
+    micro_reaction: nonEmptyStringSchema.nullable(),
+  }),
+  z.object({
+    ...reactionPresetFields,
+    action_intent: z.object({ type: z.literal("show_reaction") }),
+    speech: z.null(),
+    micro_reaction: nonEmptyStringSchema,
+  }),
+]);
+
+export const reactionPresetsSchema = z
+  .object({
+    presets: z.array(reactionPresetSchema),
+  })
+  .refine(
+    ({ presets }) => new Set(presets.map(({ id }) => id)).size === presets.length,
+    { message: "Reaction Preset IDs must be unique" },
+  );
+
 export const cognitionOutputSchema = z
   .object({
     perception: z.object({
@@ -89,12 +124,38 @@ export const cognitionOutputSchema = z
       should_advise: z.boolean(),
       should_ask_question: z.boolean(),
       response_length: z.enum(["none", "short", "medium"]),
+      response_mode: z.enum(["silent", "preset", "generated"]),
+      preset_id: nonEmptyStringSchema.nullable(),
     }),
     runtime_output: runtimeOutputSchema,
   })
   .superRefine((value, context) => {
     const actionType = value.runtime_output.action_intent.type;
     const responseLength = value.response_plan.response_length;
+    const responseMode = value.response_plan.response_mode;
+    const presetId = value.response_plan.preset_id;
+
+    if (responseMode === "preset" && presetId === null) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["response_plan", "preset_id"],
+        message: "preset response_mode requires preset_id",
+      });
+    }
+    if (responseMode !== "preset" && presetId !== null) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["response_plan", "preset_id"],
+        message: "silent and generated response modes require null preset_id",
+      });
+    }
+    if (responseMode === "silent" && actionType === "respond") {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["runtime_output", "action_intent", "type"],
+        message: "silent response_mode cannot use respond",
+      });
+    }
 
     if (responseLength === "none" && value.runtime_output.speech !== null) {
       context.addIssue({
@@ -141,6 +202,8 @@ export const bestEvaluationSchema = z.object({
 export type CharacterSpec = z.infer<typeof characterSpecSchema>;
 export type Mood = z.infer<typeof moodSchema>;
 export type RuntimeOutput = z.infer<typeof runtimeOutputSchema>;
+export type ReactionPreset = z.infer<typeof reactionPresetSchema>;
+export type ReactionPresets = z.infer<typeof reactionPresetsSchema>;
 export type CognitionOutput = z.infer<typeof cognitionOutputSchema>;
 export type InteractionPolicy = z.infer<typeof interactionPolicySchema>;
 export type CharacterPrinciples = z.infer<typeof characterPrinciplesSchema>;
