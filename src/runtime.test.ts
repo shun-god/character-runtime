@@ -29,6 +29,7 @@ import { createGoldenReference } from "./golden-comparison.js";
 import {
   createCognitionEvaluationFields,
   createEvaluationReport,
+  getEvaluationExitCode,
 } from "./evaluation-report.js";
 import { evaluationCasesSchema } from "./evaluation-case.js";
 import {
@@ -749,6 +750,28 @@ test("adds Cognition diagnostics to evaluation event results", () => {
     },
     output,
   });
+});
+
+test("sets evaluation exit status only for recorded Event errors", () => {
+  assert.equal(
+    getEvaluationExitCode([
+      {
+        comparison: {
+          action_type_match: true,
+          speech_exact_match: false,
+          micro_reaction_exact_match: false,
+        },
+      },
+    ]),
+    0,
+  );
+  assert.equal(
+    getEvaluationExitCode([
+      { comparison: null },
+      { error: "Cognition schema validation failed" },
+    ]),
+    1,
+  );
 });
 
 test("applies state effects and supplies updated state and memory next time", async () => {

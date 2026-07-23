@@ -19,6 +19,12 @@ export function createCognitionEvaluationFields(
   };
 }
 
+export function getEvaluationExitCode(
+  results: readonly object[],
+): 0 | 1 {
+  return results.some((result) => "error" in result) ? 1 : 0;
+}
+
 export function createEvaluationReport<T>(options: {
   evaluatedAt: Date;
   model: string;

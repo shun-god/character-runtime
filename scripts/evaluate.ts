@@ -9,6 +9,7 @@ import type { RuntimeEvent } from "../src/event.js";
 import {
   createCognitionEvaluationFields,
   createEvaluationReport,
+  getEvaluationExitCode,
   type CognitionDiagnostics,
 } from "../src/evaluation-report.js";
 import {
@@ -139,6 +140,7 @@ async function main(): Promise<void> {
   );
 
   console.log(`Saved evaluation results: ${outputPath}`);
+  process.exitCode = getEvaluationExitCode(results);
 }
 
 main().catch((error: unknown) => {
