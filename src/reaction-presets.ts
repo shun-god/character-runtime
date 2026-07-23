@@ -31,7 +31,7 @@ const cognitionDraftFields = {
 const presetRuntimeOutputDraftSchema = z.object({
   event_summary: z.string(),
   state_effect: stateEffectSchema,
-}).strict();
+});
 
 const generatedCognitionDraftSchema = z.object({
   ...cognitionDraftFields,

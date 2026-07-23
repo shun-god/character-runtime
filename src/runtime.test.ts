@@ -824,7 +824,7 @@ test("accepts valid structured responses without network access", () => {
   );
 });
 
-test("resolves registered Presets without accepting LLM-generated speech", () => {
+test("resolves registered Presets without using LLM-generated reaction fields", () => {
   const presetDraft = {
     ...cognitionOutput,
     response_plan: {
@@ -851,19 +851,25 @@ test("resolves registered Presets without accepting LLM-generated speech", () =>
     speech: "登録済みの挨拶です。",
     micro_reaction: "小さく微笑む",
   });
-  assert.throws(
-    () =>
-      parseGeminiCognitionOutput(
-        JSON.stringify({
-          ...presetDraft,
-          runtime_output: {
-            ...presetDraft.runtime_output,
-            speech: "LLMが作った発話",
-          },
-        }),
-        { ...parseOptions, reactionPresets },
-      ),
-    /Gemini response does not match CognitionOutput/,
+  const resolvedWithExtraFields = parseGeminiCognitionOutput(
+    JSON.stringify({
+      ...presetDraft,
+      runtime_output: {
+        ...presetDraft.runtime_output,
+        action_intent: { type: "respond" },
+        speech: "LLMが作った発話",
+        micro_reaction: "LLMが作った反応",
+      },
+    }),
+    { ...parseOptions, reactionPresets },
+  );
+  assert.equal(
+    resolvedWithExtraFields.runtime_output.speech,
+    "登録済みの挨拶です。",
+  );
+  assert.equal(
+    resolvedWithExtraFields.runtime_output.micro_reaction,
+    "小さく微笑む",
   );
 
   const silentPreset = parseGeminiCognitionOutput(
